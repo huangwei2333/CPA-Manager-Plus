@@ -94,3 +94,11 @@ Each repaired entrance needs coverage. Assert visible content and operation
 behavior, not just CSS classes. Verify desktop/mobile layout and relevant
 theme/locale variants for visible changes. Quota and model caches must retain
 their existing credential and connection isolation rules.
+
+## 凭证工作区的路由返回
+
+离开凭证管理后返回，同一连接应先恢复上次成功的列表、检查结果和概览统计，再在后台重新校验。成功的空列表也是快照；刷新失败时保留旧数据。快照仅保存在当前浏览器进程内，不把凭证 JSON、管理密钥或原始请求写入新的持久缓存；完整刷新浏览器后仍可能需要首次加载。
+
+历史统计复用既有凭证身份签名校验，窗口用量复用查询上下文与周期范围校验，不能将换号或跨周期的旧用量当成当前额度预测。连接、Manager、授权或能力发生变化时隐藏或失效不再匹配的快照；正在探测且尚无法确定 Manager 的连接不应为了消除空态而复用不确定的数据。退出登录时清除路由快照。
+
+请求清理成功后，失效凭证概览的请求派生缓存及当前 Manager 的 Header 请求快照，下次进入按保留数据重新加载；服务商原始额度缓存不受影响。此时的首次加载是删除后的必要重新校验，不应继续展示删除前的历史金额。

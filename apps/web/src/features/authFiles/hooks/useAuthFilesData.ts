@@ -18,7 +18,7 @@ import {
 } from '@/services/api';
 import { apiClient, createScopedApiRequestConfig } from '@/services/api/client';
 import { useNotificationStore } from '@/stores';
-import type { AuthFileItem } from '@/types';
+import type { ApiError, AuthFileItem } from '@/types';
 import { formatFileSize } from '@/utils/format';
 import { MAX_AUTH_FILE_SIZE } from '@/utils/constants';
 import { downloadBlob } from '@/utils/download';
@@ -30,6 +30,11 @@ import {
   type AuthJsonInputType,
 } from '@/features/authFiles/sessionAuthConverter';
 import { isRuntimeOnlyAuthFile } from '@/features/authFiles/constants';
+import {
+  clearAuthFileListSnapshot,
+  readAuthFileListSnapshot,
+  saveAuthFileListSnapshot,
+} from '@/features/authFiles/model/authFileListSnapshot';
 import {
   getAuthFileNameFromSelectionKey,
   getAuthFilePatchTarget,
@@ -762,9 +767,13 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions = {}): UseAuth
   const requestScope = options.requestScope;
   const onCredentialMutation = options.onCredentialMutation;
 
-  const [files, setFiles] = useState<AuthFileItem[]>([]);
+  const [files, setFiles] = useState<AuthFileItem[]>(
+    () => readAuthFileListSnapshot(connectionFingerprint) ?? []
+  );
   const [loading, setLoading] = useState(true);
-  const [hasLoaded, setHasLoaded] = useState(false);
+  const [hasLoaded, setHasLoaded] = useState(
+    () => readAuthFileListSnapshot(connectionFingerprint) !== null
+  );
   const [error, setError] = useState('');
   const [uploading, setUploading] = useState(false);
   const [authJsonPasteSaving, setAuthJsonPasteSaving] = useState(false);
@@ -777,6 +786,8 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions = {}): UseAuth
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const connectionFingerprintRef = useRef(connectionFingerprint);
+  const filesRef = useRef(files);
+  const hasLoadedRef = useRef(hasLoaded);
   const authFilesOperationGenerationRef = useRef(0);
   const uploadOperationRef = useRef<symbol | null>(null);
   const authJsonPasteOperationRef = useRef<symbol | null>(null);
@@ -790,8 +801,13 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions = {}): UseAuth
   const credentialRefreshGenerationRef = useRef(0);
   const selectionCount = selectedFiles.size;
   const commitFiles = useCallback((next: SetStateAction<AuthFileItem[]>) => {
+    const nextFiles = typeof next === 'function' ? next(filesRef.current) : next;
+    filesRef.current = nextFiles;
     filesRevisionRef.current += 1;
-    setFiles(next);
+    setFiles(nextFiles);
+    if (hasLoadedRef.current) {
+      saveAuthFileListSnapshot(connectionFingerprintRef.current, nextFiles);
+    }
   }, []);
 
   useLayoutEffect(() => {
@@ -805,8 +821,11 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions = {}): UseAuth
     authJsonPasteOperationRef.current = null;
     authJsonPasteSavingRef.current = false;
     deleteOperationRef.current = null;
-    commitFiles([]);
-    setHasLoaded(false);
+    const cachedFiles = readAuthFileListSnapshot(connectionFingerprint);
+    filesRef.current = cachedFiles ?? [];
+    setFiles(filesRef.current);
+    hasLoadedRef.current = cachedFiles !== null;
+    setHasLoaded(hasLoadedRef.current);
     setSelectedFiles(new Set());
     setLoading(true);
     setError('');
@@ -825,7 +844,7 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions = {}): UseAuth
       loadFilesRequestRef.current += 1;
       credentialRefreshGenerationRef.current += 1;
     };
-  }, [commitFiles, connectionFingerprint]);
+  }, [connectionFingerprint]);
 
   const clearInspectionOwnershipForFile = useCallback(
     (fileName: string) => {
@@ -979,6 +998,7 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions = {}): UseAuth
           return;
         }
         const nextFiles = Array.isArray(data?.files) ? data.files : [];
+        hasLoadedRef.current = true;
         commitFiles(nextFiles);
         setHasLoaded(true);
         return nextFiles;
@@ -986,6 +1006,15 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions = {}): UseAuth
         if (!isCurrentRequest()) {
           if (options?.throwOnError) throw err;
           return;
+        }
+        const status = (err as Partial<ApiError> | null)?.status;
+        if (status === 401 || status === 403) {
+          hasLoadedRef.current = false;
+          clearAuthFileListSnapshot();
+          filesRef.current = [];
+          setFiles([]);
+          setHasLoaded(false);
+          setSelectedFiles(new Set());
         }
         const errorMessage = err instanceof Error ? err.message : t('notification.refresh_failed');
         setError(errorMessage);
@@ -2194,13 +2223,14 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions = {}): UseAuth
     [commitFiles, requestScope, t]
   );
 
+  const isCurrentConnection = connectionFingerprintRef.current === connectionFingerprint;
   return {
-    files,
-    selectedFiles,
-    selectionCount,
-    loading,
-    initialLoading: loading && !hasLoaded,
-    hasLoaded,
+    files: isCurrentConnection ? files : [],
+    selectedFiles: isCurrentConnection ? selectedFiles : new Set<string>(),
+    selectionCount: isCurrentConnection ? selectionCount : 0,
+    loading: isCurrentConnection ? loading : true,
+    initialLoading: !isCurrentConnection || (loading && !hasLoaded),
+    hasLoaded: isCurrentConnection && hasLoaded,
     error,
     uploading,
     authJsonPasteSaving,

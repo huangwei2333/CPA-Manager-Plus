@@ -20,6 +20,9 @@ import { usageServiceApi } from '@/services/api/usageService';
 import { useConfigStore } from './useConfigStore';
 import { useModelsStore } from './useModelsStore';
 import { useQuotaStore } from './useQuotaStore';
+import { clearAuthFileListSnapshot } from '@/features/authFiles/model/authFileListSnapshot';
+import { clearCredentialInspectionRouteSnapshot } from '@/features/accounts/model/credentialInspectionRouteSnapshot';
+import { clearAccountsOverviewRouteSnapshot } from '@/features/accounts/model/accountsOverviewRouteSnapshot';
 import { useUsageServiceStore } from './useUsageServiceStore';
 import { detectApiBaseFromLocation, normalizeApiBase } from '@/utils/connection';
 import { sha256Hex } from '@/utils/apiKeyHash';
@@ -438,6 +441,9 @@ export const useAuthStore = create<AuthStoreState>()(
         useConfigStore.getState().clearCache();
         useModelsStore.getState().clearCache();
         useQuotaStore.getState().clearQuotaCache();
+        clearAuthFileListSnapshot();
+        clearCredentialInspectionRouteSnapshot();
+        clearAccountsOverviewRouteSnapshot();
         useUsageServiceStore.getState().clearUsageServiceConfig();
         apiClient.setConfig({ apiBase: '', managementKey: '' });
         set({

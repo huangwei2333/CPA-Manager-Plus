@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   createCodexInspectionConnectionFingerprint,
   loadCodexInspectionLastRun,
@@ -12,6 +12,12 @@ import {
   type CredentialInspectionSnapshot,
 } from '@/features/monitoring/model/credentialInspectionSnapshot';
 import { usageServiceApi } from '@/services/api';
+import type { ApiError } from '@/types';
+import {
+  clearCredentialInspectionRouteSnapshot,
+  readCredentialInspectionRouteSnapshot,
+  saveCredentialInspectionRouteSnapshot,
+} from '@/features/accounts/model/credentialInspectionRouteSnapshot';
 
 const EMPTY_CREDENTIAL_INSPECTION_RESULTS: CredentialInspectionResult[] = [];
 const INITIAL_INSPECTION_RUN_LIMIT = 10;
@@ -56,19 +62,24 @@ export function useCredentialInspectionSnapshot({
   const [snapshotState, setSnapshotState] = useState<{
     scopeKey: string;
     snapshot: CredentialInspectionSnapshot | null;
-  }>(() => ({ scopeKey, snapshot: null }));
+  }>(() => ({ scopeKey, snapshot: readCredentialInspectionRouteSnapshot(scopeKey) }));
   const [loadingState, setLoadingState] = useState({ scopeKey, loading: false });
   const requestIdRef = useRef(0);
   const activeScopeKeyRef = useRef(scopeKey);
+  const liveAppliedSnapshotRef = useRef<{
+    scopeKey: string;
+    snapshot: CredentialInspectionSnapshot;
+  } | null>(null);
   activeScopeKeyRef.current = scopeKey;
 
   const mergeSnapshots = useCallback(
     (candidates: Array<CredentialInspectionSnapshot | null | undefined>) => {
       setSnapshotState((current) => {
         if (current.scopeKey !== scopeKey) return current;
+        const snapshot = selectLatestCredentialInspectionSnapshot([current.snapshot, ...candidates]);
         return {
           scopeKey,
-          snapshot: selectLatestCredentialInspectionSnapshot([current.snapshot, ...candidates]),
+          snapshot,
         };
       });
     },
@@ -86,6 +97,7 @@ export function useCredentialInspectionSnapshot({
     (next: CredentialInspectionSnapshot) => {
       if (activeScopeKeyRef.current !== scopeKey) return;
       requestIdRef.current += 1;
+      liveAppliedSnapshotRef.current = { scopeKey, snapshot: next };
       setLoadingState({ scopeKey, loading: false });
       mergeSnapshots([next]);
     },
@@ -148,9 +160,16 @@ export function useCredentialInspectionSnapshot({
       }
       mergeSnapshots([localSnapshot, serverSnapshot]);
       return serverSnapshot;
-    } catch {
+    } catch (error: unknown) {
       if (isCurrentRequest()) {
-        mergeSnapshots([localSnapshot]);
+        const status = (error as Partial<ApiError> | null)?.status;
+        if (status === 401 || status === 403) {
+          clearCredentialInspectionRouteSnapshot();
+          liveAppliedSnapshotRef.current = null;
+          setSnapshotState({ scopeKey, snapshot: localSnapshot });
+        } else {
+          mergeSnapshots([localSnapshot]);
+        }
       }
       return null;
     } finally {
@@ -170,11 +189,42 @@ export function useCredentialInspectionSnapshot({
 
   useLayoutEffect(() => {
     requestIdRef.current += 1;
-    setSnapshotState({ scopeKey, snapshot: readLocalSnapshot() });
+    liveAppliedSnapshotRef.current = null;
+    setSnapshotState({
+      scopeKey,
+      snapshot: selectLatestCredentialInspectionSnapshot([
+        readCredentialInspectionRouteSnapshot(scopeKey),
+        readLocalSnapshot(),
+      ]),
+    });
     setLoadingState({ scopeKey, loading: false });
   }, [readLocalSnapshot, scopeKey]);
 
-  const snapshot = snapshotState.scopeKey === scopeKey ? snapshotState.snapshot : null;
+  useLayoutEffect(() => {
+    if (checking || serverAvailable) return;
+    clearCredentialInspectionRouteSnapshot();
+    liveAppliedSnapshotRef.current = null;
+    setSnapshotState({ scopeKey, snapshot: readLocalSnapshot() });
+  }, [checking, readLocalSnapshot, scopeKey, serverAvailable]);
+
+  useEffect(() => {
+    if (
+      snapshotState.scopeKey === scopeKey &&
+      snapshotState.snapshot &&
+      (checking || serverAvailable || snapshotState.snapshot.source !== 'server')
+    ) {
+      saveCredentialInspectionRouteSnapshot(scopeKey, snapshotState.snapshot);
+    }
+  }, [checking, scopeKey, serverAvailable, snapshotState]);
+
+  const scopedSnapshot = snapshotState.scopeKey === scopeKey ? snapshotState.snapshot : null;
+  const isLiveAppliedSnapshot =
+    liveAppliedSnapshotRef.current?.scopeKey === scopeKey &&
+    liveAppliedSnapshotRef.current.snapshot === scopedSnapshot;
+  const snapshot =
+    !checking && !serverAvailable && scopedSnapshot?.source === 'server' && !isLiveAppliedSnapshot
+      ? null
+      : scopedSnapshot;
   const loading = loadingState.scopeKey === scopeKey && loadingState.loading;
 
   return {

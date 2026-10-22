@@ -106,6 +106,7 @@ import {
   getAuthFilePatchTarget,
   getAuthFileSelectionKey,
 } from '@/features/authFiles/model/credentialStatus';
+import { clearAuthFileListSnapshot } from '@/features/authFiles/model/authFileListSnapshot';
 
 type UseAuthFilesDataHarness = {
   getCurrent: () => ReturnType<typeof useAuthFilesData>;
@@ -217,6 +218,7 @@ const mountUseAuthFilesData = (
 };
 
 beforeEach(() => {
+  clearAuthFileListSnapshot();
   mocks.list.mockReset();
   mocks.lookup.mockReset();
   mocks.saveJsonObject.mockReset();
@@ -252,6 +254,75 @@ afterEach(() => {
 });
 
 describe('useAuthFilesData revalidation', () => {
+  it('shows the last successful list immediately when the same connection page remounts', async () => {
+    const first = mountUseAuthFilesData('connection-a');
+    mocks.list.mockResolvedValueOnce({ files: [{ name: 'cached.json', id: 'credential-1' }] });
+    await act(async () => {
+      await first.getCurrent().loadFiles();
+    });
+    first.unmount();
+
+    const next = mountUseAuthFilesData('connection-a');
+    expect(next.getCurrent().files).toEqual([{ name: 'cached.json', id: 'credential-1' }]);
+    expect(next.getCurrent().hasLoaded).toBe(true);
+    expect(next.getCurrent().initialLoading).toBe(false);
+
+    const refreshed = createDeferred<{ files: AuthFileItem[] }>();
+    mocks.list.mockReturnValueOnce(refreshed.promise);
+    let pending!: Promise<unknown>;
+    act(() => {
+      pending = next.getCurrent().loadFiles();
+    });
+    expect(next.getCurrent().files[0].name).toBe('cached.json');
+    expect(next.getCurrent().loading).toBe(true);
+    await act(async () => {
+      refreshed.resolve({ files: [{ name: 'fresh.json', id: 'credential-2' }] });
+      await pending;
+    });
+    expect(next.getCurrent().files.map((file) => file.name)).toEqual(['fresh.json']);
+    next.unmount();
+  });
+
+  it('never reuses the previous connection snapshot after a connection switch', async () => {
+    const first = mountUseAuthFilesData('connection-a');
+    mocks.list.mockResolvedValueOnce({ files: [{ name: 'private.json' }] });
+    await act(async () => {
+      await first.getCurrent().loadFiles();
+    });
+    first.unmount();
+
+    const second = mountUseAuthFilesData('connection-b');
+    expect(second.getCurrent().files).toEqual([]);
+    expect(second.getCurrent().initialLoading).toBe(true);
+    second.unmount();
+
+    const again = mountUseAuthFilesData('connection-a');
+    expect(again.getCurrent().files).toEqual([]);
+    expect(again.getCurrent().initialLoading).toBe(true);
+    again.unmount();
+  });
+
+  it('clears cached credentials after a forbidden refresh and does not restore them on remount', async () => {
+    const first = mountUseAuthFilesData('connection-a');
+    mocks.list.mockResolvedValueOnce({ files: [{ name: 'private.json' }] });
+    await act(async () => {
+      await first.getCurrent().loadFiles();
+    });
+    mocks.list.mockRejectedValueOnce(Object.assign(new Error('forbidden'), { status: 403 }));
+    await act(async () => {
+      await first.getCurrent().loadFiles();
+    });
+    expect(first.getCurrent().files).toEqual([]);
+    expect(first.getCurrent().hasLoaded).toBe(false);
+    expect(first.getCurrent().error).toBe('forbidden');
+    first.unmount();
+
+    const second = mountUseAuthFilesData('connection-a');
+    expect(second.getCurrent().files).toEqual([]);
+    expect(second.getCurrent().hasLoaded).toBe(false);
+    second.unmount();
+  });
+
   it('keeps successful data and selection through pending, successful and failed refreshes', async () => {
     const hook = mountUseAuthFilesData('a');
     expect(hook.getCurrent().initialLoading).toBe(true);

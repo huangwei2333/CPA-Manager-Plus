@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next';
+import type { ReactNode } from 'react';
 import { Card } from '@/components/ui/Card';
 import type { UsageServiceStatus } from '@/services/api/usageService';
 import { formatFileSize } from '@/utils/format';
@@ -8,6 +9,7 @@ interface DatabaseStatusCardProps {
   status: UsageServiceStatus | null;
   loading: boolean;
   error: string;
+  cleanup?: ReactNode;
 }
 
 const formatBytes = (value: number | undefined) =>
@@ -19,7 +21,7 @@ const formatCount = (value: number | undefined, locale: string) =>
 const normalizeMaintenanceCount = (value: number | undefined) =>
   Number.isFinite(value) && Number(value) >= 0 ? Number(value) : 0;
 
-export function DatabaseStatusCard({ status, loading, error }: DatabaseStatusCardProps) {
+export function DatabaseStatusCard({ status, loading, error, cleanup }: DatabaseStatusCardProps) {
   const { t, i18n } = useTranslation();
   const database = status?.database;
   const databaseMaintenance = status?.databaseMaintenance;
@@ -140,7 +142,7 @@ export function DatabaseStatusCard({ status, loading, error }: DatabaseStatusCar
       }
       className={styles.card}
     >
-      <div className={styles.summaryGrid}>
+      <div className={`${styles.summaryGrid} ${cleanup ? styles.summaryWithCleanup : ''}`}>
         {summaryItems.map((item) => (
           <div
             key={item.label}
@@ -150,6 +152,7 @@ export function DatabaseStatusCard({ status, loading, error }: DatabaseStatusCar
             <strong className={styles.summaryValue}>{initialLoading ? '...' : item.value}</strong>
           </div>
         ))}
+        {cleanup ? <div className={styles.cleanupItem}>{cleanup}</div> : null}
       </div>
 
       <div className={styles.detailsGrid}>

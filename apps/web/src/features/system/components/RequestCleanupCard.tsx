@@ -33,13 +33,14 @@ export interface RequestCleanupStatus {
 }
 
 interface RequestCleanupCardProps {
+  embedded?: boolean;
   isAvailable: boolean;
   storageKey: string;
   onPreview: (cutoffTimestampMs: number, signal: AbortSignal) => Promise<RequestCleanupPreview>;
   onExecute: (preview: RequestCleanupPreview, signal: AbortSignal) => Promise<string>;
   onStatus: (runId: string | null, signal: AbortSignal) => Promise<RequestCleanupStatus | null>;
   onResume: (runId: string, signal: AbortSignal) => Promise<void>;
-  onCompleted?: () => void;
+  onCompleted?: (runId: string) => void;
 }
 
 const toLocalDateTimeValue = (timestampMs: number): string => {
@@ -68,6 +69,7 @@ const readStoredRunId = (key: string): { runId: string | null; storageAvailable:
 };
 
 export function RequestCleanupCard({
+  embedded = false,
   isAvailable,
   storageKey,
   onPreview,
@@ -201,6 +203,7 @@ export function RequestCleanupCard({
             setCompletedFromDiscovery(true);
             setDiscoveryDone(true);
             setExecuteError('');
+            onCompleted?.(status.runId);
             return;
           }
           saveRunId(status.runId);
@@ -223,7 +226,7 @@ export function RequestCleanupCard({
       controller.abort();
       if (timeout !== null) clearTimeout(timeout);
     };
-  }, [isAvailable, runId, discoveryDone, onStatus, saveRunId, t]);
+  }, [isAvailable, runId, discoveryDone, onStatus, onCompleted, saveRunId, t]);
 
   useEffect(() => {
     if (!isAvailable || !runId) return;
@@ -252,7 +255,7 @@ export function RequestCleanupCard({
           setIsCompleted(true);
           setCompletedFromDiscovery(false);
           showNotification(t('system_info.request_cleanup_success'), 'success');
-          onCompleted?.();
+          onCompleted?.(status.runId);
           return;
         }
         if (status.status === 'failed') {
@@ -306,11 +309,13 @@ export function RequestCleanupCard({
     const remaining = preview.expiresAtMs - Date.now();
     if (remaining <= 0) {
       setPreview(null);
+      setPreviewError(t('system_info.request_cleanup_preview_expired'));
       revokeConfirmation();
       return;
     }
     const timeout = setTimeout(() => {
       setPreview(null);
+      setPreviewError(t('system_info.request_cleanup_preview_expired'));
       revokeConfirmation();
     }, remaining);
     return () => clearTimeout(timeout);
@@ -318,7 +323,7 @@ export function RequestCleanupCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preview]);
 
-  const handlePreview = async () => {
+  const handlePreview = useCallback(async () => {
     if (!isAvailable || executing || blocksNewRun || cutoffTimestampMs === null) return;
     const generation = ++generationRef.current;
     previewControllerRef.current?.abort();
@@ -365,7 +370,29 @@ export function RequestCleanupCard({
         previewControllerRef.current = null;
       }
     }
-  };
+  }, [isAvailable, executing, blocksNewRun, cutoffTimestampMs, onPreview, t]);
+
+  useEffect(() => {
+    if (
+      !embedded ||
+      !isAvailable ||
+      executing ||
+      blocksNewRun ||
+      isCompleted ||
+      cutoffTimestampMs === null
+    )
+      return;
+    const timeout = setTimeout(() => void handlePreview(), 350);
+    return () => clearTimeout(timeout);
+  }, [
+    embedded,
+    isAvailable,
+    executing,
+    blocksNewRun,
+    isCompleted,
+    cutoffTimestampMs,
+    handlePreview,
+  ]);
 
   const handleConfirm = () => {
     if (
@@ -381,7 +408,7 @@ export function RequestCleanupCard({
     const confirmedGeneration = generationRef.current;
     const cutoffLabel = formatDateTime(new Date(preview.cutoffTimestampMs), i18n.language);
     const countLabel = preview.eventCount.toLocaleString(i18n.language);
-    const quotaWarning = t('system_info.request_cleanup_quota_warning');
+    const quotaWarning = `${t('system_info.request_cleanup_preserved')} ${t('system_info.request_cleanup_quota_warning')}`;
     const confirmation = {
       title: t('system_info.request_cleanup_confirm_title'),
       message: t('system_info.request_cleanup_confirm_message', {
@@ -477,19 +504,33 @@ export function RequestCleanupCard({
     }
   };
 
-  return (
-    <Card title={t('system_info.request_cleanup_title')} className={styles.card}>
-      <p className={styles.description}>{t('system_info.request_cleanup_description')}</p>
-      <p className={styles.notice}>
-        <strong>{t('system_info.request_cleanup_irreversible')}</strong>{' '}
-        {t('system_info.request_cleanup_preserved')}{' '}
-        {t('system_info.request_cleanup_quota_warning')}
-      </p>
+  const content = (
+    <>
+      {embedded ? (
+        <strong
+          className={styles.embeddedTitle}
+          title={`${t('system_info.request_cleanup_preserved')} ${t('system_info.request_cleanup_quota_warning')}`}
+        >
+          {t('system_info.request_cleanup_title')}
+        </strong>
+      ) : null}
+      {!embedded ? (
+        <p className={styles.description}>{t('system_info.request_cleanup_description')}</p>
+      ) : null}
+      {!embedded ? (
+        <p className={styles.notice}>
+          <strong>{t('system_info.request_cleanup_irreversible')}</strong>{' '}
+          {t('system_info.request_cleanup_preserved')}{' '}
+          {t('system_info.request_cleanup_quota_warning')}
+        </p>
+      ) : null}
       <div className={styles.controls}>
         <Input
           type="datetime-local"
-          label={t('system_info.request_cleanup_cutoff')}
-          hint={t('system_info.request_cleanup_timezone', { timezone })}
+          label={embedded ? undefined : t('system_info.request_cleanup_cutoff')}
+          aria-label={embedded ? t('system_info.request_cleanup_cutoff') : undefined}
+          title={embedded ? t('system_info.request_cleanup_timezone', { timezone }) : undefined}
+          hint={embedded ? undefined : t('system_info.request_cleanup_timezone', { timezone })}
           value={cutoffInput}
           max={toLocalDateTimeValue(Date.now())}
           disabled={!isAvailable || executing || blocksNewRun}
@@ -500,20 +541,24 @@ export function RequestCleanupCard({
           }
           onChange={(event) => {
             invalidatePreview();
+            setIsCompleted(false);
+            setCompletedFromDiscovery(false);
             setCutoffInput(event.target.value);
           }}
         />
         <div className={styles.actions}>
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            disabled={!isAvailable || cutoffTimestampMs === null || executing || blocksNewRun}
-            loading={previewLoading}
-            onClick={() => void handlePreview()}
-          >
-            {t('system_info.request_cleanup_preview')}
-          </Button>
+          {!embedded ? (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={!isAvailable || cutoffTimestampMs === null || executing || blocksNewRun}
+              loading={previewLoading}
+              onClick={() => void handlePreview()}
+            >
+              {t('system_info.request_cleanup_preview')}
+            </Button>
+          ) : null}
           <Button
             type="button"
             variant="danger"
@@ -530,6 +575,18 @@ export function RequestCleanupCard({
           >
             {t('system_info.request_cleanup_execute')}
           </Button>
+          {embedded && previewError && cutoffTimestampMs !== null ? (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={!isAvailable || executing || blocksNewRun}
+              loading={previewLoading}
+              onClick={() => void handlePreview()}
+            >
+              {t('system_info.request_cleanup_preview')}
+            </Button>
+          ) : null}
           {needsResume ? (
             <Button
               type="button"
@@ -543,6 +600,9 @@ export function RequestCleanupCard({
           ) : null}
         </div>
       </div>
+      {embedded ? (
+        <p className={styles.notice}>{t('system_info.request_cleanup_irreversible')}</p>
+      ) : null}
       <div className={styles.feedback} aria-live="polite" aria-busy={previewLoading || executing}>
         {!storageAvailable ? (
           <p role="alert">{t('system_info.request_cleanup_storage_unavailable')}</p>
@@ -577,10 +637,14 @@ export function RequestCleanupCard({
                 }
               )}
             </span>
-            {showDeletionProgress ? (
+            {showDeletionProgress || (embedded && jobStatus.status === 'rebuilding') ? (
               <progress
                 max={Math.max(jobStatus.targetCount, 1)}
-                value={Math.max(0, Math.min(jobStatus.deletedCount, jobStatus.targetCount))}
+                value={
+                  showDeletionProgress
+                    ? Math.max(0, Math.min(jobStatus.deletedCount, jobStatus.targetCount))
+                    : undefined
+                }
                 aria-label={t('system_info.request_cleanup_progress')}
               />
             ) : null}
@@ -602,6 +666,14 @@ export function RequestCleanupCard({
           </p>
         ) : null}
       </div>
+    </>
+  );
+
+  return embedded ? (
+    <div className={styles.embedded}>{content}</div>
+  ) : (
+    <Card title={t('system_info.request_cleanup_title')} className={styles.card}>
+      {content}
     </Card>
   );
 }

@@ -68,10 +68,11 @@ const changeCutoff = async (value: string) => {
   });
 };
 
-const mount = async (isAvailable = true) => {
+const mount = async (isAvailable = true, embedded = false) => {
   await act(async () => {
     renderer = create(
       <RequestCleanupCard
+        embedded={embedded}
         isAvailable={isAvailable}
         storageKey="manager-scope"
         onPreview={mocks.onPreview}
@@ -117,6 +118,63 @@ afterEach(async () => {
 });
 
 describe('RequestCleanupCard', () => {
+  it('keeps completion visible until the cutoff changes instead of automatically previewing again', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-22T12:00:00Z'));
+    await mount(true, true);
+    await changeCutoff(firstCutoffInput);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(350);
+    });
+    await act(async () => clickButton('danger').props.onClick());
+    await act(async () => mocks.confirmation?.onConfirm());
+    expect(mocks.onCompleted).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(700);
+    });
+    expect(mocks.onPreview).toHaveBeenCalledTimes(1);
+    expect(clickButton('danger').props.disabled).toBe(true);
+    expect(
+      renderer!.root
+        .findAllByProps({ role: 'status' })
+        .some((node) => node.children.includes('system_info.request_cleanup_success'))
+    ).toBe(true);
+
+    await changeCutoff(secondCutoffInput);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(350);
+    });
+    expect(mocks.onPreview).toHaveBeenCalledTimes(2);
+    expect(clickButton('danger').props.disabled).toBe(false);
+  });
+
+  it('previews the selected cutoff automatically in the embedded storage panel', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-22T12:00:00Z'));
+    await mount(true, true);
+    await changeCutoff(firstCutoffInput);
+
+    expect(mocks.onPreview).not.toHaveBeenCalled();
+    expect(clickButton('danger').props.disabled).toBe(true);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(350);
+    });
+
+    expect(mocks.onPreview).toHaveBeenCalledWith(
+      new Date(firstCutoffInput).getTime(),
+      expect.any(AbortSignal)
+    );
+    expect(clickButton('danger').props.disabled).toBe(false);
+    expect(
+      renderer!.root
+        .findAllByType('p')
+        .some((node) =>
+          node.children.join('').includes('system_info.request_cleanup_preview_summary')
+        )
+    ).toBe(true);
+  });
+
   it('shows irreversible and quota-cycle risks before either confirmation', async () => {
     await mount();
 
@@ -299,7 +357,7 @@ describe('RequestCleanupCard', () => {
 
     expect(mocks.onStatus).toHaveBeenCalledWith(null, expect.any(AbortSignal));
     expect(mocks.onStatus).toHaveBeenCalledTimes(2);
-    expect(mocks.onCompleted).not.toHaveBeenCalled();
+    expect(mocks.onCompleted).toHaveBeenCalledWith('completed-run');
     expect(clickButton('secondary').props.disabled).toBe(false);
     expect(
       renderer!.root

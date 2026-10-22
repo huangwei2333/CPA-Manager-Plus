@@ -83,6 +83,12 @@ import {
   useCredentialInspectionSnapshot,
 } from '@/features/accounts/hooks/useCredentialInspectionSnapshot';
 import { useAccountsWorkspaceRefresh } from '@/features/accounts/hooks/useAccountsWorkspaceRefresh';
+import {
+  clearAccountsOverviewRouteSnapshot,
+  readAccountsOverviewRouteSnapshot,
+  saveAccountsOverviewRouteSnapshot,
+  type AccountHistoryRouteItem,
+} from '@/features/accounts/model/accountsOverviewRouteSnapshot';
 import { useHeaderSnapshotsLoader } from '@/features/monitoring/hooks/useHeaderSnapshotsLoader';
 import { PaginationControls } from '@/features/monitoring/components/MonitoringShared';
 import { CredentialHealthInspectionWorkspace } from '@/features/monitoring/components/CredentialHealthInspectionWorkspace';
@@ -1305,6 +1311,21 @@ export function AccountsPage() {
       ),
     [featureAvailability.managerServiceBase, managementKey]
   );
+  const accountDataScopeKey = useMemo(
+    () =>
+      createCredentialInspectionSnapshotScopeKey(
+        connectionFingerprint,
+        featureAvailability.managerServiceBase ?? '',
+        managementKey
+      ),
+    [connectionFingerprint, featureAvailability.managerServiceBase, managementKey]
+  );
+  const [initialAccountDataSnapshot] = useState(() =>
+    featureAvailability.checking || featureAvailability.requestMonitoringAvailable
+      ? readAccountsOverviewRouteSnapshot(accountDataScopeKey)
+      : null
+  );
+  const [accountDataStateScope, setAccountDataStateScope] = useState(accountDataScopeKey);
   const requestHistoryAvailable =
     managerStorageAvailable && featureAvailability.requestMonitoringAvailable;
   const credentialMutationHandlerRef = useRef<(mutation: AuthFilesCredentialMutation) => void>(
@@ -1509,35 +1530,65 @@ export function AccountsPage() {
 
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(() => initialWorkspaceUrlState.current.pageSize);
-  const [usageRows, setUsageRows] = useState<UsageValueRow[]>([]);
-  type ScopedAccountHistory = {
-    item: MonitoringAccountHistoryItem;
-    identitySignature: string;
-  };
+  const [usageRows, setUsageRows] = useState<UsageValueRow[]>(
+    () => initialAccountDataSnapshot?.usageRows ?? []
+  );
+  const usageRowsIdentitySignatureRef = useRef(
+    initialAccountDataSnapshot?.usageRowsIdentitySignature ?? ''
+  );
   const [accountHistoryByRowKey, setAccountHistoryByRowKey] = useState<
-    Map<string, ScopedAccountHistory>
-  >(() => new Map());
+    Map<string, AccountHistoryRouteItem>
+  >(() => initialAccountDataSnapshot?.accountHistoryByRowKey ?? new Map());
   const [accountHistoryLoading, setAccountHistoryLoading] = useState(false);
   const [accountHistoryErrorsByRowKey, setAccountHistoryErrorsByRowKey] = useState<
     Map<string, string>
   >(() => new Map());
   const [accountWindowUsageByKey, setAccountWindowUsageByKey] = useState<
     Map<string, MonitoringAccountWindowUsageItem>
-  >(() => new Map());
+  >(() => initialAccountDataSnapshot?.accountWindowUsageByKey ?? new Map());
   const [listWindowUsageByKey, setListWindowUsageByKey] = useState<
     Map<string, MonitoringAccountWindowUsageItem>
-  >(() => new Map());
+  >(() => initialAccountDataSnapshot?.listWindowUsageByKey ?? new Map());
   const [listWindowUsageQueryContext, setListWindowUsageQueryContext] = useState<{
     pageKeys: string[];
     identityByRowKey: Map<string, string>;
     asOfMs: number;
-  } | null>(null);
+  } | null>(() => initialAccountDataSnapshot?.listWindowUsageQueryContext ?? null);
   const [accountWindowUsageQueryContext, setAccountWindowUsageQueryContext] = useState<{
     rowKey: string;
     identitySignature: string;
     asOfMs: number;
-  } | null>(null);
+  } | null>(() => initialAccountDataSnapshot?.accountWindowUsageQueryContext ?? null);
   const [accountWindowUsageError, setAccountWindowUsageError] = useState('');
+  useEffect(() => {
+    if (accountDataStateScope !== accountDataScopeKey) return;
+    if (featureAvailability.checking) return;
+    if (!managerStorageAvailable || !featureAvailability.requestMonitoringAvailable) {
+      clearAccountsOverviewRouteSnapshot();
+      return;
+    }
+    saveAccountsOverviewRouteSnapshot(accountDataScopeKey, {
+      accountHistoryByRowKey,
+      listWindowUsageByKey,
+      listWindowUsageQueryContext,
+      accountWindowUsageByKey,
+      accountWindowUsageQueryContext,
+      usageRows,
+      usageRowsIdentitySignature: usageRowsIdentitySignatureRef.current,
+    });
+  }, [
+    accountDataScopeKey,
+    accountDataStateScope,
+    accountHistoryByRowKey,
+    accountWindowUsageByKey,
+    accountWindowUsageQueryContext,
+    featureAvailability.checking,
+    featureAvailability.requestMonitoringAvailable,
+    listWindowUsageByKey,
+    listWindowUsageQueryContext,
+    managerStorageAvailable,
+    usageRows,
+  ]);
   const [quotaSnapshotWindowsByRowKey, setQuotaSnapshotWindowsByRowKey] = useState<
     Map<string, AccountQuotaSnapshotWindow[]>
   >(() => new Map());
@@ -1591,15 +1642,7 @@ export function AccountsPage() {
   const [quotaCooldowns, setQuotaCooldowns] = useState<Map<string, QuotaCooldownInfo>>(
     () => new Map()
   );
-  const credentialEvidenceScopeKey = useMemo(
-    () =>
-      createCredentialInspectionSnapshotScopeKey(
-        connectionFingerprint,
-        featureAvailability.managerServiceBase ?? '',
-        managementKey
-      ),
-    [connectionFingerprint, featureAvailability.managerServiceBase, managementKey]
-  );
+  const credentialEvidenceScopeKey = accountDataScopeKey;
   const activeCredentialEvidenceScopeKeyRef = useRef(credentialEvidenceScopeKey);
   activeCredentialEvidenceScopeKeyRef.current = credentialEvidenceScopeKey;
   const [credentialEvidenceBoundarySessionState, setCredentialEvidenceBoundarySessionState] =
@@ -2258,6 +2301,11 @@ export function AccountsPage() {
       setHistoryRefreshing(false);
       return;
     }
+    const restoredOverview =
+      connectionScopeChanged &&
+      (featureAvailability.checking || featureAvailability.requestMonitoringAvailable)
+        ? readAccountsOverviewRouteSnapshot(accountDataScopeKey)
+        : null;
     quotaCooldownRequestIdRef.current += 1;
     accountHistoryAutoAbortRef.current?.abort();
     accountHistoryAutoAbortRef.current = null;
@@ -2273,6 +2321,7 @@ export function AccountsPage() {
     accountActionCandidatesLoadedRef.current = false;
     quotaCooldownsLoadedRef.current = false;
     if (connectionScopeChanged) {
+      setAccountDataStateScope(accountDataScopeKey);
       synchronizedInspectionMutationKeysRef.current.clear();
       synchronizingInspectionMutationsRef.current.clear();
       pendingInspectionMutationSnapshotsRef.current.clear();
@@ -2291,16 +2340,18 @@ export function AccountsPage() {
     setQuotaCooldowns(new Map());
     setAccountActionCandidates([]);
     setHeaderSnapshotLoadedKey('');
-    setAccountHistoryByRowKey((current) => (current.size === 0 ? current : new Map()));
+    setAccountHistoryByRowKey(restoredOverview?.accountHistoryByRowKey ?? new Map());
     setAccountHistoryLoading(false);
     setAccountHistoryErrorsByRowKey((current) => (current.size === 0 ? current : new Map()));
     setHistoryRefreshing(false);
     setQuotaSnapshotWindowsByRowKey((current) => (current.size === 0 ? current : new Map()));
-    setAccountWindowUsageByKey((current) => (current.size === 0 ? current : new Map()));
-    setListWindowUsageByKey((current) => (current.size === 0 ? current : new Map()));
-    setAccountWindowUsageQueryContext(null);
+    setAccountWindowUsageByKey(restoredOverview?.accountWindowUsageByKey ?? new Map());
+    setListWindowUsageByKey(restoredOverview?.listWindowUsageByKey ?? new Map());
+    setListWindowUsageQueryContext(restoredOverview?.listWindowUsageQueryContext ?? null);
+    setAccountWindowUsageQueryContext(restoredOverview?.accountWindowUsageQueryContext ?? null);
     setAccountWindowUsageError('');
-    setUsageRows([]);
+    usageRowsIdentitySignatureRef.current = restoredOverview?.usageRowsIdentitySignature ?? '';
+    setUsageRows(restoredOverview?.usageRows ?? []);
     setDetailEventsRowKey(null);
     setDetailEvents([]);
     setDetailEventsSummary(null);
@@ -2315,6 +2366,7 @@ export function AccountsPage() {
     setDetailEventsError('');
     setSuppressedInspectionResultKeys(readCompletedAccountReauthResultKeys(connectionFingerprint));
   }, [
+    accountDataScopeKey,
     connectionFingerprint,
     featureAvailability.checking,
     featureAvailability.managerServiceBase,
@@ -3686,13 +3738,21 @@ export function AccountsPage() {
   );
   const verifiedAccountHistoryByRowKey = useMemo(() => {
     const current = new Map<string, MonitoringAccountHistoryItem>();
+    if (!featureAvailability.checking && !featureAvailability.requestMonitoringAvailable) {
+      return current;
+    }
     accountHistoryByRowKey.forEach((scoped, selectionKey) => {
       if (scoped.identitySignature === accountHistoryIdentityByRowKey.get(selectionKey)) {
         current.set(selectionKey, scoped.item);
       }
     });
     return current;
-  }, [accountHistoryByRowKey, accountHistoryIdentityByRowKey]);
+  }, [
+    accountHistoryByRowKey,
+    accountHistoryIdentityByRowKey,
+    featureAvailability.checking,
+    featureAvailability.requestMonitoringAvailable,
+  ]);
   const requestEvidenceBySelectionKey = useMemo(() => {
     const evidenceMap = new Map<string, AccountRequestEvidenceInput>();
     verifiedAccountHistoryByRowKey.forEach((history, selectionKey) => {
@@ -4883,6 +4943,7 @@ export function AccountsPage() {
   ]);
   const matchingAccountWindowUsageByKey = useMemo(
     () =>
+      (featureAvailability.checking || featureAvailability.requestMonitoringAvailable) &&
       accountWindowUsageQueryContext?.identitySignature === selectedRowIdentitySignature
         ? filterAccountWindowUsageByTargetRanges(accountWindowUsageTargets, accountWindowUsageByKey, {
             allowPriorCurrentEnd: true,
@@ -4892,6 +4953,8 @@ export function AccountsPage() {
       accountWindowUsageByKey,
       accountWindowUsageQueryContext,
       accountWindowUsageTargets,
+      featureAvailability.checking,
+      featureAvailability.requestMonitoringAvailable,
       selectedRowIdentitySignature,
     ]
   );
@@ -4985,6 +5048,7 @@ export function AccountsPage() {
   }, [isListQueryContextMatching, listQuotaWindowsByRowKey, listWindowUsageQueryContext, pageRows]);
   const matchingListWindowUsageByKey = useMemo(
     () =>
+      (featureAvailability.checking || featureAvailability.requestMonitoringAvailable) &&
       isListQueryContextMatching
         ? filterAccountWindowUsageByTargetRanges(
             listWindowUsageTargets.filter(
@@ -4997,6 +5061,8 @@ export function AccountsPage() {
         : new Map<string, MonitoringAccountWindowUsageItem>(),
     [
       isListQueryContextMatching,
+      featureAvailability.checking,
+      featureAvailability.requestMonitoringAvailable,
       listWindowUsageByKey,
       listWindowUsageIdentityByRowKey,
       listWindowUsageQueryContext,
@@ -6100,6 +6166,7 @@ export function AccountsPage() {
     usageValuesRequestIdRef.current = requestId;
     const commitRows = (rows: UsageValueRow[]) => {
       if (usageValuesRequestIdRef.current !== requestId) return;
+      usageRowsIdentitySignatureRef.current = selectedRowIdentitySignature;
       setUsageRows(rows);
     };
     const fallback = () => {
@@ -6152,6 +6219,7 @@ export function AccountsPage() {
     featureAvailability.requestMonitoringAvailable,
     managementKey,
     selectedRow,
+    selectedRowIdentitySignature,
   ]);
 
   useEffect(() => {
@@ -6279,7 +6347,7 @@ export function AccountsPage() {
         setAccountHistoryByRowKey((current) => {
           const merged = mergeResult
             ? new Map(current)
-            : new Map<string, ScopedAccountHistory>();
+            : new Map<string, AccountHistoryRouteItem>();
           entries.forEach((entry) => {
             const requestVersion = requestVersions.get(entry.rowKey);
             if (accountHistoryRequestVersionsRef.current.get(entry.rowKey) !== requestVersion) {
@@ -9945,9 +10013,14 @@ export function AccountsPage() {
       { id: 'models', label: t('accounts.detail_tab_models') },
       { id: 'diagnostics', label: t('accounts.detail_tab_diagnostics') },
     ];
+    const scopedUsageRows =
+      (featureAvailability.checking || featureAvailability.requestMonitoringAvailable) &&
+      usageRowsIdentitySignatureRef.current === selectedRowIdentitySignature
+        ? usageRows
+        : [];
     const valueRow =
-      usageRows.find((row) => row.row?.selectionKey === selectedRow.selectionKey) ??
-      usageRows.find((row) => !row.row && row.fileName === selectedRow.fileName);
+      scopedUsageRows.find((row) => row.row?.selectionKey === selectedRow.selectionKey) ??
+      scopedUsageRows.find((row) => !row.row && row.fileName === selectedRow.fileName);
     const selectedQuotaWindows = (
       effectiveQuotaWindowDefinitionsByRowKey.get(selectedRow.selectionKey) ??
       buildAccountQuotaWindowDefinitions(buildQuotaDisplayWindows(selectedRow))

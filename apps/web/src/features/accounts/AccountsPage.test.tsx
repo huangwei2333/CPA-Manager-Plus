@@ -47,6 +47,8 @@ import {
   saveAccountCredentialEvidenceBoundaryState,
 } from './model/accountCredentialEvidenceStorage';
 import { createCredentialInspectionSnapshotScopeKey } from './hooks/useCredentialInspectionSnapshot';
+import { clearCredentialInspectionRouteSnapshot } from './model/credentialInspectionRouteSnapshot';
+import { clearAccountsOverviewRouteSnapshot } from './model/accountsOverviewRouteSnapshot';
 import { createCodexInspectionConnectionFingerprint } from '@/features/monitoring/codexInspection';
 import type { AccountCredentialEvidenceBoundary } from './model/accountCredentialEvidence';
 import {
@@ -1306,6 +1308,8 @@ describe('AccountsPage replacement flows', () => {
   });
 
   beforeEach(() => {
+    clearAccountsOverviewRouteSnapshot();
+    clearCredentialInspectionRouteSnapshot();
     clearAccountCredentialEvidenceBoundaryStateCache();
     clearAccountCredentialMutationMarkersForTests();
     clearPendingAccountDirectReauthsForTests();
@@ -12520,6 +12524,116 @@ describe('AccountsPage replacement flows', () => {
       renderer.update(<AccountsPage />);
     });
     expect(readText(findAccountCardByKey(renderer, rowKey))).toContain('$12.34');
+  });
+
+  it('shows last history and window estimates while requests are pending after a route remount', async () => {
+    const file = makeCodexFile('route-cache.json', 'auth-route', 'route@example.com');
+    const rowKey = getAuthFileSelectionKey(file);
+    mocks.files = [file];
+    mocks.panelFeatureAvailability = {
+      checking: false,
+      managerServiceBase: 'http://manager.local:18317',
+      requestMonitoringAvailable: true,
+      serverCodexInspectionAvailable: false,
+    };
+    const resetAtMs = Date.now() + 3 * 3600 * 1000;
+    mocks.quotaState.codexQuota = buildCredentialScopedQuotaRecord(file, {
+      status: 'success',
+      fetchedAtMs: Date.now(),
+      windows: [{
+        id: 'five-hour',
+        label: 'Five hours',
+        usedPercent: 40,
+        resetAtMs,
+        resetLabel: new Date(resetAtMs).toISOString(),
+        resetAccuracy: 'exact',
+        limitWindowSeconds: 5 * 3600,
+        cycleStartMs: resetAtMs - 5 * 3600 * 1000,
+        cycleEndMs: resetAtMs,
+        windowMode: 'fixed',
+        kind: 'five_hour',
+        quotaProgressObservedAtMs: Date.now(),
+        modelScope: CODEX_MAIN_SCOPE,
+      }],
+    });
+    mocks.getAccountHistory.mockResolvedValue(makeAccountHistoryResponse([{
+      row_key: rowKey,
+      account_key: 'route@example.com',
+      matched: true,
+      total_requests: 100,
+      success_calls: 99,
+      failure_calls: 1,
+      total_tokens: 12_000,
+      total_cost: 12.34,
+      success_rate: 0.99,
+      first_seen_ms: 1,
+      last_seen_ms: 2,
+      sync_status: 'ready',
+    }]));
+    mocks.getAccountWindowUsage.mockImplementation(async (_base, _key, request) => ({
+      generated_at_ms: Date.now(),
+      items: request.windows.map((window) => ({
+        ...window,
+        matched: true,
+        total_requests: 10,
+        success_calls: 10,
+        failure_calls: 0,
+        total_tokens: 50_000,
+        total_cost: 0.5,
+        success_rate: 1,
+        last_seen_ms: Date.now() - 1000,
+        scope_match_status: 'complete',
+        unmatched_requests: 0,
+        sync_status: 'ready',
+      })),
+    }));
+
+    const first = await renderAccountsPage();
+    await flushPromises();
+    expect(readText(findAccountCardByKey(first, rowKey))).toContain('$12.34');
+    expect(readText(findAccountCardByKey(first, rowKey))).toContain('$0.50');
+    expect(readText(findAccountCardByKey(first, rowKey))).toContain('$1.25');
+    await act(async () => first.unmount());
+    mountedAccountsRenderers.delete(first);
+
+    const pendingHistory = createDeferred<AccountHistoryResponseForTest>();
+    const pendingWindow = createDeferred<AccountWindowUsageResponseForTest>();
+    mocks.getAccountHistory.mockReturnValue(pendingHistory.promise);
+    mocks.getAccountWindowUsage.mockReturnValue(pendingWindow.promise);
+    const second = await renderAccountsPage();
+    expect(mocks.getAccountHistory).toHaveBeenCalledTimes(2);
+    expect(readText(findAccountCardByKey(second, rowKey))).toContain('$12.34');
+    expect(readText(findAccountCardByKey(second, rowKey))).toContain('$0.50');
+    expect(readText(findAccountCardByKey(second, rowKey))).toContain('$1.25');
+
+    await act(async () => second.unmount());
+    mountedAccountsRenderers.delete(second);
+    const replacement = makeCodexFile(file.name, 'auth-route', 'replacement@example.com');
+    expect(getAuthFileSelectionKey(replacement)).toBe(rowKey);
+    mocks.files = [replacement];
+    mocks.quotaState.codexQuota = buildCredentialScopedQuotaRecord(replacement, {
+      status: 'success',
+      windows: [{
+        id: 'five-hour',
+        label: 'Five hours',
+        usedPercent: 40,
+        resetAtMs,
+        resetLabel: new Date(resetAtMs).toISOString(),
+        resetAccuracy: 'exact',
+        limitWindowSeconds: 5 * 3600,
+        modelScope: CODEX_MAIN_SCOPE,
+      }],
+    });
+    const third = await renderAccountsPage();
+    const replacedCardText = readText(findAccountCardByKey(third, rowKey));
+    expect(replacedCardText).not.toContain('$12.34');
+    expect(replacedCardText).not.toContain('$0.50');
+
+    await act(async () => {
+      pendingHistory.resolve(makeAccountHistoryResponse([]));
+      pendingWindow.resolve({ generated_at_ms: Date.now(), items: [] });
+      await Promise.resolve();
+    });
   });
 
   it('does not retain old historical usage when an account changes behind the same row key', async () => {

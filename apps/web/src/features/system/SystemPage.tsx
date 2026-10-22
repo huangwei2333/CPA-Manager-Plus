@@ -23,6 +23,11 @@ import { apiKeysApi } from '@/services/api/apiKeys';
 import { usageServiceApi, type UsageServiceStatus } from '@/services/api/usageService';
 import { isDemoMode } from '@/features/demo/demoMode';
 import { sha256Hex } from '@/utils/apiKeyHash';
+import { clearAccountsOverviewRouteSnapshot } from '@/features/accounts/model/accountsOverviewRouteSnapshot';
+import {
+  buildUsageHeaderSnapshotScopeKey,
+  useUsageHeaderSnapshotStore,
+} from '@/stores/useUsageHeaderSnapshotStore';
 import { classifyModels, modelDisplayLabel } from '@/utils/models';
 import { STORAGE_KEY_AUTH, STORAGE_KEY_QUOTA_CACHE } from '@/utils/constants';
 import iconGemini from '@/assets/icons/gemini.svg';
@@ -44,6 +49,9 @@ import { DatabaseStatusCard } from './components/DatabaseStatusCard';
 import { RequestCleanupCard, type RequestCleanupPreview } from './components/RequestCleanupCard';
 import { useManagerUpdates } from './ManagerUpdates';
 import styles from './SystemPage.module.scss';
+
+// 同一已完成作业只失效一次，返回系统页不应重复清空新加载的概览。
+let lastReconciledRequestCleanup: { scopeKey: string; runId: string } | null = null;
 
 const MODEL_CATEGORY_ICONS: Record<string, string | { light: string; dark: string }> = {
   devin: { light: iconDevinLight, dark: iconDevinDark },
@@ -323,9 +331,31 @@ function SystemPageContent() {
     },
     [featureAvailability.managerServiceBase, auth.managementKey]
   );
-  const handleRequestCleanupCompleted = useCallback(() => {
-    void refreshDatabaseStatus();
-  }, [refreshDatabaseStatus]);
+  const handleRequestCleanupCompleted = useCallback(
+    (runId: string) => {
+      if (
+        lastReconciledRequestCleanup?.scopeKey === cleanupScopeKey &&
+        lastReconciledRequestCleanup.runId === runId
+      )
+        return;
+      lastReconciledRequestCleanup = { scopeKey: cleanupScopeKey, runId };
+      clearAccountsOverviewRouteSnapshot();
+      const headerSnapshots = useUsageHeaderSnapshotStore.getState();
+      if (
+        headerSnapshots.scopeKey ===
+        buildUsageHeaderSnapshotScopeKey(featureAvailability.managerServiceBase, auth.managementKey)
+      ) {
+        headerSnapshots.activateScope('');
+      }
+      void refreshDatabaseStatus();
+    },
+    [
+      cleanupScopeKey,
+      featureAvailability.managerServiceBase,
+      auth.managementKey,
+      refreshDatabaseStatus,
+    ]
+  );
 
   const handleClearLoginStorage = () => {
     showConfirmation({
@@ -453,19 +483,21 @@ function SystemPageContent() {
             status={databaseStatus}
             loading={databaseLoading}
             error={databaseError}
-          />
-        )}
-
-        {canUseRequestCleanup && (
-          <RequestCleanupCard
-            key={cleanupScopeKey}
-            isAvailable={canUseRequestCleanup}
-            storageKey={cleanupScopeKey}
-            onPreview={previewRequestCleanup}
-            onExecute={executeRequestCleanup}
-            onStatus={getRequestCleanupStatus}
-            onResume={resumeRequestCleanup}
-            onCompleted={handleRequestCleanupCompleted}
+            cleanup={
+              canUseRequestCleanup ? (
+                <RequestCleanupCard
+                  key={cleanupScopeKey}
+                  embedded
+                  isAvailable={canUseRequestCleanup}
+                  storageKey={cleanupScopeKey}
+                  onPreview={previewRequestCleanup}
+                  onExecute={executeRequestCleanup}
+                  onStatus={getRequestCleanupStatus}
+                  onResume={resumeRequestCleanup}
+                  onCompleted={handleRequestCleanupCompleted}
+                />
+              ) : undefined
+            }
           />
         )}
 

@@ -37,6 +37,24 @@ const status: UsageServiceStatus = {
 };
 
 describe('DatabaseStatusCard', () => {
+  it('places cleanup after the SHM file in the storage summary', () => {
+    const markup = renderToStaticMarkup(
+      <DatabaseStatusCard
+        status={status}
+        loading={false}
+        error=""
+        cleanup={<button type="button">cleanup-control</button>}
+      />
+    );
+
+    expect(markup.indexOf('system_info.database_shm_file')).toBeLessThan(
+      markup.indexOf('cleanup-control')
+    );
+    expect(markup.indexOf('cleanup-control')).toBeLessThan(
+      markup.indexOf('system_info.database_journal_size_limit')
+    );
+  });
+
   it('renders the wide storage summary and latest checkpoint snapshot', () => {
     const markup = renderToStaticMarkup(
       <DatabaseStatusCard status={status} loading={false} error="" />

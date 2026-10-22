@@ -7,6 +7,7 @@ import type {
   CredentialInspectionResult,
 } from '@/features/monitoring/model/credentialInspectionSnapshot';
 import { useCredentialInspectionSnapshot } from './useCredentialInspectionSnapshot';
+import { clearCredentialInspectionRouteSnapshot } from '@/features/accounts/model/credentialInspectionRouteSnapshot';
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -57,8 +58,8 @@ function ScopedHarness({
   const { results, applySnapshot } = useCredentialInspectionSnapshot({
     connectionFingerprint,
     checking: false,
-    serverAvailable: false,
-    managerServiceBase: '',
+    serverAvailable: true,
+    managerServiceBase: 'http://manager.local:18317',
     managementKey: 'manager-key',
   });
   onApplySnapshot(applySnapshot);
@@ -72,11 +73,17 @@ function ScopedHarness({
 
 type CredentialInspectionHookState = ReturnType<typeof useCredentialInspectionSnapshot>;
 
-function ServerHarness({ onState }: { onState: (state: CredentialInspectionHookState) => void }) {
+function ServerHarness({
+  onState,
+  serverAvailable = true,
+}: {
+  onState: (state: CredentialInspectionHookState) => void;
+  serverAvailable?: boolean;
+}) {
   const state = useCredentialInspectionSnapshot({
     connectionFingerprint: 'connection-a',
     checking: false,
-    serverAvailable: true,
+    serverAvailable,
     managerServiceBase: 'http://manager.local:18317',
     managementKey: 'manager-key',
   });
@@ -143,6 +150,7 @@ const makeResult = (account: string, createdAtMs: number): CredentialInspectionR
 });
 
 beforeEach(() => {
+  clearCredentialInspectionRouteSnapshot();
   mocks.loadLastRun.mockReset();
   mocks.loadLastRun.mockReturnValue(null);
   mocks.listRuns.mockReset();
@@ -151,6 +159,91 @@ beforeEach(() => {
 });
 
 describe('useCredentialInspectionSnapshot', () => {
+  it('reuses the last completed inspection while the same connection refreshes after remount', () => {
+    let currentState: CredentialInspectionHookState | null = null;
+    let renderer: ReactTestRenderer;
+    act(() => {
+      renderer = create(<ServerHarness onState={(state) => (currentState = state)} />);
+    });
+    act(() =>
+      currentState!.applySnapshot({
+        source: 'server',
+        completedAtMs: 300,
+        results: [makeResult('cached@example.com', 300)],
+        runs: [],
+      })
+    );
+    act(() => renderer!.unmount());
+
+    act(() => {
+      renderer = create(<ServerHarness onState={(state) => (currentState = state)} />);
+    });
+    expect(currentState!.results).toEqual([
+      expect.objectContaining({ displayAccount: 'cached@example.com' }),
+    ]);
+    act(() => renderer!.unmount());
+  });
+
+  it('does not restore server inspection after stable capability revocation', () => {
+    let currentState: CredentialInspectionHookState | null = null;
+    let renderer: ReactTestRenderer;
+    act(() => {
+      renderer = create(<ServerHarness onState={(state) => (currentState = state)} />);
+    });
+    act(() =>
+      currentState!.applySnapshot({
+        source: 'server',
+        completedAtMs: 300,
+        results: [makeResult('revoked@example.com', 300)],
+        runs: [],
+      })
+    );
+    act(() => renderer!.unmount());
+
+    act(() => {
+      renderer = create(
+        <ServerHarness onState={(state) => (currentState = state)} serverAvailable={false} />
+      );
+    });
+    expect(currentState!.results).toEqual([]);
+    act(() => renderer!.unmount());
+
+    act(() => {
+      renderer = create(<ServerHarness onState={(state) => (currentState = state)} />);
+    });
+    expect(currentState!.results).toEqual([]);
+    act(() => renderer!.unmount());
+  });
+
+  it('drops the prior server inspection after a forbidden refresh', async () => {
+    let currentState: CredentialInspectionHookState | null = null;
+    let renderer: ReactTestRenderer;
+    act(() => {
+      renderer = create(<ServerHarness onState={(state) => (currentState = state)} />);
+    });
+    act(() =>
+      currentState!.applySnapshot({
+        source: 'server',
+        completedAtMs: 300,
+        results: [makeResult('forbidden@example.com', 300)],
+        runs: [],
+      })
+    );
+    mocks.listRuns.mockRejectedValueOnce(Object.assign(new Error('forbidden'), { status: 403 }));
+    await act(async () => {
+      await currentState!.refresh();
+    });
+    expect(currentState!.results).toEqual([]);
+    expect(currentState!.snapshot?.source ?? null).not.toBe('server');
+    act(() => renderer!.unmount());
+
+    act(() => {
+      renderer = create(<ServerHarness onState={(state) => (currentState = state)} />);
+    });
+    expect(currentState!.results).toEqual([]);
+    act(() => renderer!.unmount());
+  });
+
   it('keeps the empty result collection stable across parent renders', () => {
     const observed: Array<readonly unknown[]> = [];
     const onResults = (results: readonly unknown[]) => observed.push(results);
