@@ -376,6 +376,14 @@ func (s *Store) RequestCleanupReadReady(ctx context.Context) (bool, error) {
 	return !blocked, err
 }
 
+// 清理接管派生回填时，常驻回填 worker 让出写入权；采集和迁移仍可运行。
+func (s *Store) RequestCleanupOwnsRollups(ctx context.Context) (bool, error) {
+	var active bool
+	err := s.db.QueryRowContext(ctx, `select exists(select 1 from usage_request_cleanup_runs
+		where status in ('queued','deleting','rebuilding') or (status='failed' and deleted_count>0) limit 1)`).Scan(&active)
+	return active, err
+}
+
 func (s *Store) ResumeRequestCleanup(ctx context.Context, id string) (RequestCleanupRun, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

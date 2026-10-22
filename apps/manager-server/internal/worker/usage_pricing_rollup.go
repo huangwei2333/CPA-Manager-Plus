@@ -93,6 +93,13 @@ func (w *UsagePricingRollupWorker) catchUp(ctx context.Context) bool {
 		if ctx.Err() != nil {
 			return false
 		}
+		paused, err := w.store.RequestCleanupOwnsRollups(ctx)
+		if err != nil || paused {
+			if err != nil && ctx.Err() == nil {
+				log.Printf("[usage-derived] 检查请求清理状态失败：%v", err)
+			}
+			return false
+		}
 		if allUsageDerivedTasksIdle(idleByTask) {
 			break
 		}

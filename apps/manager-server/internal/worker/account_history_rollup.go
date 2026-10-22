@@ -80,6 +80,13 @@ func (w *AccountHistoryRollupWorker) catchUp(ctx context.Context) bool {
 		if ctx.Err() != nil {
 			return false
 		}
+		paused, err := w.store.RequestCleanupOwnsRollups(ctx)
+		if err != nil || paused {
+			if err != nil && ctx.Err() == nil {
+				log.Printf("[usage-rollup] 检查请求清理状态失败：%v", err)
+			}
+			return false
+		}
 		result, err := w.store.CatchUpAccountHistoryRollups(ctx, w.batchLimit, time.Now().UnixMilli())
 		if err != nil {
 			log.Printf("[usage-rollup] account history catch-up failed: %v", err)

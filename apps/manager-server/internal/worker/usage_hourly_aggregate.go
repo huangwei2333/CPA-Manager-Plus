@@ -80,6 +80,13 @@ func (w *UsageHourlyAggregateWorker) catchUp(ctx context.Context) bool {
 		if ctx.Err() != nil {
 			return false
 		}
+		paused, err := w.store.RequestCleanupOwnsRollups(ctx)
+		if err != nil || paused {
+			if err != nil && ctx.Err() == nil {
+				log.Printf("[usage-aggregate] 检查请求清理状态失败：%v", err)
+			}
+			return false
+		}
 		nowMS := time.Now().UnixMilli()
 		result, err := w.store.CatchUpUsageHourlyAggregate(ctx, w.batchLimit, nowMS)
 		if err != nil {

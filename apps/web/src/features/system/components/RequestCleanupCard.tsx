@@ -106,6 +106,19 @@ export function RequestCleanupCard({
     preview.expiresAtMs > Date.now();
   const needsResume =
     runId !== null && jobStatus?.status === 'failed' && jobStatus.deletedCount > 0;
+  const hasFinishedDeleting =
+    jobStatus !== null &&
+    jobStatus.targetCount > 0 &&
+    jobStatus.deletedCount >= jobStatus.targetCount;
+  const hasFailedRebuild =
+    jobStatus?.status === 'failed' &&
+    (jobStatus.errorCode === 'request_cleanup_rebuild_failed' ||
+      (jobStatus.errorCode === 'request_cleanup_failed' && hasFinishedDeleting));
+  const showDeletionProgress =
+    jobStatus !== null &&
+    (jobStatus.status === 'queued' ||
+      jobStatus.status === 'deleting' ||
+      (jobStatus.status === 'failed' && !hasFinishedDeleting));
   const blocksNewRun =
     (runId === null && !discoveryDone) ||
     (runId !== null && (jobStatus === null || jobStatus.status !== 'failed' || needsResume));
@@ -243,9 +256,19 @@ export function RequestCleanupCard({
           return;
         }
         if (status.status === 'failed') {
+          const isRebuildFailure =
+            status.errorCode === 'request_cleanup_rebuild_failed' ||
+            (status.errorCode === 'request_cleanup_failed' &&
+              status.targetCount > 0 &&
+              status.deletedCount >= status.targetCount);
+          const isDeletionFailure = status.errorCode === 'request_cleanup_delete_failed';
           setExecuteError(
             t('system_info.request_cleanup_job_failed', {
-              code: status.errorCode || t('system_info.request_cleanup_unknown_error'),
+              code: isRebuildFailure
+                ? t('system_info.request_cleanup_rebuild_failure_reason')
+                : isDeletionFailure
+                  ? t('system_info.request_cleanup_delete_failure_reason')
+                  : status.errorCode || t('system_info.request_cleanup_unknown_error'),
             })
           );
           return;
@@ -457,8 +480,11 @@ export function RequestCleanupCard({
   return (
     <Card title={t('system_info.request_cleanup_title')} className={styles.card}>
       <p className={styles.description}>{t('system_info.request_cleanup_description')}</p>
-      <p className={styles.scopeHint}>{t('system_info.request_cleanup_preserved')}</p>
-      <p className={styles.quotaWarning}>{t('system_info.request_cleanup_quota_warning')}</p>
+      <p className={styles.notice}>
+        <strong>{t('system_info.request_cleanup_irreversible')}</strong>{' '}
+        {t('system_info.request_cleanup_preserved')}{' '}
+        {t('system_info.request_cleanup_quota_warning')}
+      </p>
       <div className={styles.controls}>
         <Input
           type="datetime-local"
@@ -477,15 +503,45 @@ export function RequestCleanupCard({
             setCutoffInput(event.target.value);
           }}
         />
-        <Button
-          type="button"
-          variant="secondary"
-          disabled={!isAvailable || cutoffTimestampMs === null || executing || blocksNewRun}
-          loading={previewLoading}
-          onClick={() => void handlePreview()}
-        >
-          {t('system_info.request_cleanup_preview')}
-        </Button>
+        <div className={styles.actions}>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            disabled={!isAvailable || cutoffTimestampMs === null || executing || blocksNewRun}
+            loading={previewLoading}
+            onClick={() => void handlePreview()}
+          >
+            {t('system_info.request_cleanup_preview')}
+          </Button>
+          <Button
+            type="button"
+            variant="danger"
+            size="sm"
+            disabled={
+              !isAvailable ||
+              blocksNewRun ||
+              !hasCurrentPreview ||
+              preview?.eventCount === 0 ||
+              previewLoading
+            }
+            loading={executing}
+            onClick={handleConfirm}
+          >
+            {t('system_info.request_cleanup_execute')}
+          </Button>
+          {needsResume ? (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              loading={executing}
+              onClick={() => void handleResume()}
+            >
+              {t('system_info.request_cleanup_resume')}
+            </Button>
+          ) : null}
+        </div>
       </div>
       <div className={styles.feedback} aria-live="polite" aria-busy={previewLoading || executing}>
         {!storageAvailable ? (
@@ -513,17 +569,25 @@ export function RequestCleanupCard({
         {runId && jobStatus ? (
           <div className={styles.progress} role="status">
             <span>
-              {t(`system_info.request_cleanup_status_${jobStatus.status}`, {
-                deleted: jobStatus.deletedCount.toLocaleString(i18n.language),
-                total: jobStatus.targetCount.toLocaleString(i18n.language),
-              })}
+              {t(
+                `system_info.request_cleanup_status_${hasFailedRebuild ? 'rebuild_failed' : jobStatus.status}`,
+                {
+                  deleted: jobStatus.deletedCount.toLocaleString(i18n.language),
+                  total: jobStatus.targetCount.toLocaleString(i18n.language),
+                }
+              )}
             </span>
-            <progress
-              max={Math.max(jobStatus.targetCount, 1)}
-              value={Math.max(0, Math.min(jobStatus.deletedCount, jobStatus.targetCount))}
-              aria-label={t('system_info.request_cleanup_progress')}
-            />
-            <code className={styles.runId}>{runId}</code>
+            {showDeletionProgress ? (
+              <progress
+                max={Math.max(jobStatus.targetCount, 1)}
+                value={Math.max(0, Math.min(jobStatus.deletedCount, jobStatus.targetCount))}
+                aria-label={t('system_info.request_cleanup_progress')}
+              />
+            ) : null}
+            <details className={styles.taskDetails}>
+              <summary>{t('system_info.request_cleanup_task_details')}</summary>
+              <code className={styles.runId}>{runId}</code>
+            </details>
           </div>
         ) : null}
         {executeError ? <p role="alert">{executeError}</p> : null}
@@ -536,33 +600,6 @@ export function RequestCleanupCard({
                 : 'system_info.request_cleanup_success'
             )}
           </p>
-        ) : null}
-      </div>
-      <div className={styles.actions}>
-        <Button
-          type="button"
-          variant="danger"
-          disabled={
-            !isAvailable ||
-            blocksNewRun ||
-            !hasCurrentPreview ||
-            preview?.eventCount === 0 ||
-            previewLoading
-          }
-          loading={executing}
-          onClick={handleConfirm}
-        >
-          {t('system_info.request_cleanup_execute')}
-        </Button>
-        {needsResume ? (
-          <Button
-            type="button"
-            variant="secondary"
-            loading={executing}
-            onClick={() => void handleResume()}
-          >
-            {t('system_info.request_cleanup_resume')}
-          </Button>
         ) : null}
       </div>
     </Card>

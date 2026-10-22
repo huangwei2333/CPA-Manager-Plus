@@ -117,6 +117,135 @@ afterEach(async () => {
 });
 
 describe('RequestCleanupCard', () => {
+  it('shows irreversible and quota-cycle risks before either confirmation', async () => {
+    await mount();
+
+    expect(
+      renderer!.root
+        .findAllByType('strong')
+        .some((node) => node.children.includes('system_info.request_cleanup_irreversible'))
+    ).toBe(true);
+    expect(
+      renderer!.root
+        .findAllByType('p')
+        .some(
+          (node) =>
+            node.children.includes('system_info.request_cleanup_preserved') &&
+            node.children.includes('system_info.request_cleanup_quota_warning')
+        )
+    ).toBe(true);
+    expect(mocks.showConfirmation).not.toHaveBeenCalled();
+  });
+
+  it('does not show completed deletion as completed statistics while rebuilding', async () => {
+    mocks.onStatus.mockImplementation(async (runId) => ({
+      runId: runId ?? 'rebuilding-run',
+      status: 'rebuilding',
+      targetCount: 5,
+      deletedCount: 5,
+      rebuildStatus: 'rebuilding',
+    }));
+    await mount();
+
+    expect(renderer!.root.findAllByType('progress')).toHaveLength(0);
+    expect(
+      renderer!.root
+        .findAllByType('span')
+        .some((node) =>
+          node.children.join('').includes('system_info.request_cleanup_status_rebuilding')
+        )
+    ).toBe(true);
+    expect(mocks.onCompleted).not.toHaveBeenCalled();
+  });
+
+  it('names a failed statistics rebuild and offers the same job for recovery', async () => {
+    mocks.onStatus.mockImplementation(async (runId) => ({
+      runId: runId ?? 'failed-rebuild-run',
+      status: 'failed',
+      targetCount: 5,
+      deletedCount: 5,
+      rebuildStatus: 'failed',
+      errorCode: 'request_cleanup_rebuild_failed',
+    }));
+    await mount();
+
+    expect(renderer!.root.findAllByType('progress')).toHaveLength(0);
+    expect(
+      renderer!.root
+        .findAllByType('span')
+        .some((node) =>
+          node.children.join('').includes('system_info.request_cleanup_status_rebuild_failed')
+        )
+    ).toBe(true);
+    expect(
+      renderer!.root
+        .findAllByProps({ role: 'alert' })
+        .some((node) =>
+          node.children.join('').includes('system_info.request_cleanup_rebuild_failure_reason')
+        )
+    ).toBe(true);
+    expect(
+      renderer!.root
+        .findAllByType(Button)
+        .some((button) => button.props.children === 'system_info.request_cleanup_resume')
+    ).toBe(true);
+    expect(mocks.onCompleted).not.toHaveBeenCalled();
+  });
+
+  it('recognizes the deployed legacy failure code after all requests were deleted', async () => {
+    mocks.onStatus.mockImplementation(async (runId) => ({
+      runId: runId ?? 'legacy-failed-run',
+      status: 'failed',
+      targetCount: 5,
+      deletedCount: 5,
+      rebuildStatus: 'failed',
+      errorCode: 'request_cleanup_failed',
+    }));
+    await mount();
+
+    expect(
+      renderer!.root
+        .findAllByType('span')
+        .some((node) =>
+          node.children.join('').includes('system_info.request_cleanup_status_rebuild_failed')
+        )
+    ).toBe(true);
+    expect(
+      renderer!.root
+        .findAllByProps({ role: 'alert' })
+        .some((node) =>
+          node.children.join('').includes('system_info.request_cleanup_rebuild_failure_reason')
+        )
+    ).toBe(true);
+  });
+
+  it('does not mislabel a finalization failure as a statistics rebuild failure', async () => {
+    mocks.onStatus.mockImplementation(async (runId) => ({
+      runId: runId ?? 'delete-failed-run',
+      status: 'failed',
+      targetCount: 5,
+      deletedCount: 5,
+      rebuildStatus: 'failed',
+      errorCode: 'request_cleanup_delete_failed',
+    }));
+    await mount();
+
+    expect(
+      renderer!.root
+        .findAllByType('span')
+        .some((node) =>
+          node.children.join('').includes('system_info.request_cleanup_status_rebuild_failed')
+        )
+    ).toBe(false);
+    expect(
+      renderer!.root
+        .findAllByProps({ role: 'alert' })
+        .some((node) =>
+          node.children.join('').includes('system_info.request_cleanup_delete_failure_reason')
+        )
+    ).toBe(true);
+  });
+
   it('checks the server for a preexisting task before enabling a new preview', async () => {
     let resolveDiscovery!: (value: RequestCleanupStatus | null) => void;
     mocks.onStatus.mockImplementationOnce(

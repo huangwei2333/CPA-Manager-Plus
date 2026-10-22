@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/sqliteutil"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/store"
 )
 
@@ -23,9 +24,11 @@ var (
 )
 
 const (
-	requestCleanupPreviewTTL   = 10 * time.Minute
-	requestCleanupScanInterval = 2 * time.Second
-	requestCleanupBatchSize    = 1000
+	requestCleanupPreviewTTL    = 10 * time.Minute
+	requestCleanupScanInterval  = 2 * time.Second
+	requestCleanupBatchSize     = 1000
+	requestCleanupRebuildRounds = 8
+	requestCleanupYieldDelay    = 20 * time.Millisecond
 )
 
 type RequestCleanupPreview struct {
@@ -266,6 +269,7 @@ func (s *Service) WaitRequestCleanupJobs(ctx context.Context) error {
 func (m *requestCleanupManager) loop(ctx context.Context) {
 	ticker := time.NewTicker(requestCleanupScanInterval)
 	defer ticker.Stop()
+	busyStreak := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -276,7 +280,7 @@ func (m *requestCleanupManager) loop(ctx context.Context) {
 		run, found, err := m.store.ActiveRequestCleanup(ctx)
 		if err != nil {
 			if ctx.Err() == nil {
-				log.Printf("[request-cleanup] inspect run: %v", err)
+				log.Printf("[request-cleanup] 检查作业失败：%v", err)
 			}
 			continue
 		}
@@ -287,18 +291,55 @@ func (m *requestCleanupManager) loop(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			log.Printf("[request-cleanup] process run %s: %v", run.ID, err)
+			if sqliteutil.IsBusyError(err) {
+				busyStreak++
+				if busyStreak == 1 || busyStreak%10 == 0 {
+					log.Printf("[request-cleanup] SQLite 写锁争用，作业 %s 将重试（第 %d 次）：%v", run.ID, busyStreak, err)
+				}
+				delay := time.Duration(min(busyStreak, 10)) * 200 * time.Millisecond
+				if !waitRequestCleanupYield(ctx, delay) {
+					return
+				}
+				continue
+			}
+			busyStreak = 0
+			log.Printf("[request-cleanup] 作业 %s 处理失败：%v", run.ID, err)
 			failureCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			if stateErr := m.store.SetRequestCleanupState(failureCtx, run.ID, "failed", "request_cleanup_failed"); stateErr != nil {
-				log.Printf("[request-cleanup] persist failure for run %s: %v", run.ID, stateErr)
+			code := "request_cleanup_failed"
+			latest, inspectErr := m.store.RequestCleanupRun(failureCtx, run.ID)
+			if inspectErr == nil {
+				if latest.ResetDone {
+					code = "request_cleanup_rebuild_failed"
+				} else {
+					code = "request_cleanup_delete_failed"
+				}
+			} else {
+				log.Printf("[request-cleanup] 获取作业 %s 阶段失败：%v", run.ID, inspectErr)
+			}
+			if stateErr := m.store.SetRequestCleanupState(failureCtx, run.ID, "failed", code); stateErr != nil {
+				log.Printf("[request-cleanup] 记录作业 %s 失败状态时出错：%v", run.ID, stateErr)
 			}
 			cancel()
+		} else {
+			busyStreak = 0
 		}
+	}
+}
+
+func waitRequestCleanupYield(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 
 func (m *requestCleanupManager) advance(ctx context.Context, run store.RequestCleanupRun) error {
 	if run.Status == "queued" || run.Status == "deleting" {
+		batches := 0
 		for ctx.Err() == nil {
 			_, done, err := m.store.DeleteRequestCleanupBatch(ctx, run.ID, requestCleanupBatchSize)
 			if err != nil {
@@ -306,6 +347,10 @@ func (m *requestCleanupManager) advance(ctx context.Context, run store.RequestCl
 			}
 			if done {
 				break
+			}
+			batches++
+			if batches%4 == 0 && !waitRequestCleanupYield(ctx, requestCleanupYieldDelay) {
+				return ctx.Err()
 			}
 		}
 		if ctx.Err() != nil {
@@ -320,41 +365,46 @@ func (m *requestCleanupManager) advance(ctx context.Context, run store.RequestCl
 	if run.Status != "rebuilding" {
 		return nil
 	}
-	// 主进程常驻 worker 也会回填，清理作业主动推进一批以便重启恢复和
-	// 独立运行时均可完成。dashboard_hourly 在当前启动流程中没有常驻 worker。
-	nowMS := time.Now().UnixMilli()
-	if _, err := m.store.CatchUpAccountHistoryRollups(ctx, requestCleanupBatchSize, nowMS); err != nil {
-		return err
-	}
-	if _, err := m.store.CatchUpDashboardHourlyRollups(ctx, requestCleanupBatchSize, nowMS); err != nil {
-		return err
-	}
-	if m.aggregateEnabled {
-		if _, err := m.store.CatchUpUsageHourlyAggregate(ctx, requestCleanupBatchSize, nowMS); err != nil {
+	// 清理期间由本作业独占派生回填；每轮多个小事务，并定期让出写锁给采集器。
+	for round := 0; round < requestCleanupRebuildRounds && ctx.Err() == nil; round++ {
+		nowMS := time.Now().UnixMilli()
+		if _, err := m.store.CatchUpAccountHistoryRollups(ctx, requestCleanupBatchSize, nowMS); err != nil {
 			return err
 		}
+		// dashboard_hourly 没有常驻 worker，必须由清理作业推进。
+		if _, err := m.store.CatchUpDashboardHourlyRollups(ctx, requestCleanupBatchSize, nowMS); err != nil {
+			return err
+		}
+		if m.aggregateEnabled {
+			if _, err := m.store.CatchUpUsageHourlyAggregate(ctx, requestCleanupBatchSize, nowMS); err != nil {
+				return err
+			}
+		}
+		if _, err := m.store.CatchUpUsageMonitoringProjection(ctx, requestCleanupBatchSize, nowMS); err != nil {
+			return err
+		}
+		if _, err := m.store.CatchUpUsageMonitoringMetadata(ctx, requestCleanupBatchSize, nowMS); err != nil {
+			return err
+		}
+		if _, err := m.store.CatchUpUsageMonitoringStats(ctx, requestCleanupBatchSize, nowMS); err != nil {
+			return err
+		}
+		if _, err := m.store.CatchUpCodexLegacyIdentityEvidence(ctx, requestCleanupBatchSize, nowMS); err != nil {
+			return err
+		}
+		if _, err := m.store.CatchUpUsagePricing(ctx, requestCleanupBatchSize, nowMS); err != nil {
+			return err
+		}
+		ready, err := m.store.RequestCleanupRebuildReady(ctx, run.RebuildTargetID, m.aggregateEnabled)
+		if err != nil {
+			return err
+		}
+		if ready {
+			return m.store.SetRequestCleanupState(ctx, run.ID, "completed", "")
+		}
+		if round+1 < requestCleanupRebuildRounds && !waitRequestCleanupYield(ctx, requestCleanupYieldDelay) {
+			return ctx.Err()
+		}
 	}
-	if _, err := m.store.CatchUpUsageMonitoringProjection(ctx, requestCleanupBatchSize, nowMS); err != nil {
-		return err
-	}
-	if _, err := m.store.CatchUpUsageMonitoringMetadata(ctx, requestCleanupBatchSize, nowMS); err != nil {
-		return err
-	}
-	if _, err := m.store.CatchUpUsageMonitoringStats(ctx, requestCleanupBatchSize, nowMS); err != nil {
-		return err
-	}
-	if _, err := m.store.CatchUpCodexLegacyIdentityEvidence(ctx, requestCleanupBatchSize, nowMS); err != nil {
-		return err
-	}
-	if _, err := m.store.CatchUpUsagePricing(ctx, requestCleanupBatchSize, nowMS); err != nil {
-		return err
-	}
-	ready, err := m.store.RequestCleanupRebuildReady(ctx, run.RebuildTargetID, m.aggregateEnabled)
-	if err != nil {
-		return err
-	}
-	if ready {
-		return m.store.SetRequestCleanupState(ctx, run.ID, "completed", "")
-	}
-	return nil
+	return ctx.Err()
 }

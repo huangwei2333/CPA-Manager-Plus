@@ -1,45 +1,54 @@
 .card {
   min-width: 0;
+  padding: calc(var(--app-card-padding) * 0.75);
+
+  :global(.card-header) {
+    margin-bottom: $spacing-sm;
+  }
 }
 
-.description,
-.scopeHint {
-  margin: 0 0 12px;
+.description {
+  margin: 0 0 $spacing-sm;
   color: var(--text-secondary);
   font-size: 13px;
-  line-height: 1.5;
+  line-height: 1.4;
 }
 
-.scopeHint {
-  color: var(--text-primary);
-}
-
-.quotaWarning {
-  margin: 0 0 12px;
-  padding: 8px 10px;
+.notice {
+  margin: 0 0 $spacing-sm;
+  padding: $spacing-sm;
   border: 1px solid color-mix(in srgb, var(--warning-color) 35%, var(--border-subtle));
   border-radius: var(--app-radius-sm);
   color: var(--text-primary);
   font-size: 12px;
-  line-height: 1.5;
+  line-height: 1.45;
 }
 
 .controls {
   display: grid;
   grid-template-columns: minmax(220px, 1fr) auto;
-  align-items: end;
-  gap: 12px;
+  align-items: center;
+  gap: $spacing-sm;
+
+  :global(.form-group) {
+    min-width: 0;
+    margin-bottom: 0;
+  }
 }
 
 .feedback {
-  min-height: 24px;
+  margin-top: $spacing-sm;
   color: var(--text-secondary);
   font-size: 13px;
-  line-height: 1.5;
+  line-height: 1.4;
+
+  &:empty {
+    display: none;
+  }
 }
 
 .feedback p {
-  margin: 8px 0;
+  margin: $spacing-xs 0;
 }
 
 .feedback [role='alert'] {
@@ -48,30 +57,43 @@
 
 .actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 12px;
+  gap: $spacing-sm;
 }
 
 .progress {
   display: grid;
-  gap: 8px;
+  gap: $spacing-xs;
 }
 
 .progress progress {
   width: 100%;
 }
 
+.taskDetails summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
 .runId {
+  display: block;
   max-width: 100%;
   overflow-wrap: anywhere;
   color: var(--text-tertiary);
   font-size: 11px;
 }
 
-@media (max-width: 600px) {
+@media (max-width: $breakpoint-mobile) {
   .controls {
+    grid-template-columns: 1fr;
+  }
+
+  .actions {
+    display: grid;
     grid-template-columns: 1fr;
   }
 
