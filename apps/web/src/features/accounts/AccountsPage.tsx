@@ -4884,7 +4884,9 @@ export function AccountsPage() {
   const matchingAccountWindowUsageByKey = useMemo(
     () =>
       accountWindowUsageQueryContext?.identitySignature === selectedRowIdentitySignature
-        ? filterAccountWindowUsageByTargetRanges(accountWindowUsageTargets, accountWindowUsageByKey)
+        ? filterAccountWindowUsageByTargetRanges(accountWindowUsageTargets, accountWindowUsageByKey, {
+            allowPriorCurrentEnd: true,
+          })
         : new Map<string, MonitoringAccountWindowUsageItem>(),
     [
       accountWindowUsageByKey,
@@ -4989,7 +4991,8 @@ export function AccountsPage() {
               (entry) => listWindowUsageQueryContext!.identityByRowKey.get(entry.rowKey) ===
                 listWindowUsageIdentityByRowKey.get(entry.rowKey)
             ),
-            listWindowUsageByKey
+            listWindowUsageByKey,
+            { allowPriorCurrentEnd: true }
           )
         : new Map<string, MonitoringAccountWindowUsageItem>(),
     [
@@ -6015,21 +6018,49 @@ export function AccountsPage() {
         setAccountWindowUsageByKey(new Map());
         return;
       }
-      const response = await monitoringAnalyticsApi.getAccountWindowUsage(
-        featureAvailability.managerServiceBase,
-        managementKey,
-        {
-          windows: entries.map((entry) => entry.target),
-        },
-        controller.signal
-      );
       if (!isCurrentRequest()) return;
+      const priorContextMatches =
+        accountWindowUsageQueryContext?.rowKey === selectedRow.selectionKey &&
+        accountWindowUsageQueryContext.identitySignature === selectedRowIdentitySignature;
+      setAccountWindowUsageByKey((current) =>
+        priorContextMatches
+          ? filterAccountWindowUsageByTargetRanges(entries, current, {
+              allowPriorCurrentEnd: true,
+            })
+          : new Map()
+      );
       setAccountWindowUsageQueryContext({
         rowKey: selectedRow.selectionKey,
         identitySignature: selectedRowIdentitySignature,
         asOfMs: queryAsOfMs,
       });
-      setAccountWindowUsageByKey(buildAccountWindowUsageByKey(entries, response.items ?? []));
+      const orderedEntries = [...entries].sort(
+        (left, right) => Number(right.period === 'current') - Number(left.period === 'current')
+      );
+      await mapWithConcurrency(orderedEntries, 3, async (entry) => {
+        if (!isCurrentRequest()) return;
+        try {
+          const response = await monitoringAnalyticsApi.getAccountWindowUsage(
+            featureAvailability.managerServiceBase,
+            managementKey,
+            { windows: [entry.target] },
+            controller.signal
+          );
+          if (!isCurrentRequest()) return;
+          const result = buildAccountWindowUsageByKey([entry], response.items ?? []);
+          setAccountWindowUsageByKey((current) => {
+            const next = new Map(current);
+            next.delete(entry.requestKey);
+            result.forEach((item, key) => next.set(key, item));
+            return next;
+          });
+        } catch (err: unknown) {
+          if (!isCurrentRequest()) return;
+          setAccountWindowUsageError(
+            err instanceof Error ? err.message : t('notification.load_failed')
+          );
+        }
+      });
     } catch (err: unknown) {
       if (!isCurrentRequest()) return;
       setAccountWindowUsageError(
@@ -6045,6 +6076,7 @@ export function AccountsPage() {
   }, [
     buildCodexSnapshotDefinitions,
     buildQuotaDisplayWindows,
+    accountWindowUsageQueryContext,
     effectiveQuotaWindowDefinitionsByRowKey,
     featureAvailability.checking,
     featureAvailability.managerServiceBase,
@@ -6977,27 +7009,53 @@ export function AccountsPage() {
       listWindowUsageReqIdRef.current === requestId && !controller.signal.aborted;
 
     try {
-      const response = await monitoringAnalyticsApi.getAccountWindowUsage(
-        featureAvailability.managerServiceBase,
-        managementKey,
-        {
-          windows: queryTargets.map((entry) => entry.target),
-        },
-        controller.signal
-      );
       if (!isCurrentRequest()) return;
+      const reusableTargets = queryTargets.filter(
+        (entry) =>
+          listWindowUsageQueryContext?.identityByRowKey.get(entry.rowKey) ===
+          listWindowUsageIdentityByRowKey.get(entry.rowKey)
+      );
+      setListWindowUsageByKey((current) =>
+        filterAccountWindowUsageByTargetRanges(reusableTargets, current, {
+          allowPriorCurrentEnd: true,
+        })
+      );
       setListWindowUsageQueryContext({
         pageKeys: currentPageKeys,
         identityByRowKey: new Map(listWindowUsageIdentityByRowKey),
         asOfMs: queryAsOfMs,
       });
-      setListWindowUsageByKey(
-        buildAccountWindowUsageByKey(queryTargets, response.items ?? [])
+      const orderedTargets = [...queryTargets].sort(
+        (left, right) => Number(right.period === 'current') - Number(left.period === 'current')
       );
+      let failedWindowCount = 0;
+      await mapWithConcurrency(orderedTargets, 3, async (entry) => {
+        if (!isCurrentRequest()) return;
+        try {
+          const response = await monitoringAnalyticsApi.getAccountWindowUsage(
+            featureAvailability.managerServiceBase,
+            managementKey,
+            { windows: [entry.target] },
+            controller.signal
+          );
+          if (!isCurrentRequest()) return;
+          const result = buildAccountWindowUsageByKey([entry], response.items ?? []);
+          setListWindowUsageByKey((current) => {
+            const next = new Map(current);
+            next.delete(entry.requestKey);
+            result.forEach((item, key) => next.set(key, item));
+            return next;
+          });
+        } catch {
+          if (isCurrentRequest()) failedWindowCount += 1;
+        }
+      });
+      if (isCurrentRequest() && failedWindowCount > 0) {
+        showNotification(t('notification.refresh_failed'), 'warning');
+      }
     } catch {
-      // Keep the last successful usage while this refresh fails. The existing
-      // target-range filter still rejects changed credentials or quota cycles.
-      // 失败静默降级，不阻塞列表显示
+      // 刷新失败时保留同一凭证、同一周期的上次成功数据，并统一提示一次。
+      if (isCurrentRequest()) showNotification(t('notification.refresh_failed'), 'warning');
     } finally {
       if (listWindowUsageReqIdRef.current === requestId) {
         if (listWindowUsageAbortRef.current === controller) {
@@ -7011,9 +7069,12 @@ export function AccountsPage() {
     featureAvailability.requestMonitoringAvailable,
     listQuotaWindowsByRowKey,
     listWindowUsageIdentityByRowKey,
+    listWindowUsageQueryContext,
     managementKey,
     managerStorageAvailable,
     pageRows,
+    showNotification,
+    t,
   ]);
 
   useEffect(() => {

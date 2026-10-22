@@ -222,6 +222,15 @@ func (r *Repository) createRun(ctx context.Context, id, mode string, cutoffTimes
 	if _, err := tx.ExecContext(ctx, `update usage_archive_runs set updated_at_ms = updated_at_ms where id = ?`, id); err != nil {
 		return Run{}, err
 	}
+	var cleanupActive bool
+	if err := tx.QueryRowContext(ctx, `select exists(select 1 from usage_request_cleanup_runs
+		where status in ('queued','deleting','rebuilding') or (status='failed' and deleted_count>0)
+		limit 1)`).Scan(&cleanupActive); err != nil {
+		return Run{}, err
+	}
+	if cleanupActive {
+		return Run{}, ErrMaintenanceLocked
+	}
 	var activeID string
 	err = tx.QueryRowContext(ctx, `select id from usage_archive_runs
 		where status not in (?, ?)

@@ -1,0 +1,81 @@
+.card {
+  min-width: 0;
+}
+
+.description,
+.scopeHint {
+  margin: 0 0 12px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.scopeHint {
+  color: var(--text-primary);
+}
+
+.quotaWarning {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--warning-color) 35%, var(--border-subtle));
+  border-radius: var(--app-radius-sm);
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.controls {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+}
+
+.feedback {
+  min-height: 24px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.feedback p {
+  margin: 8px 0;
+}
+
+.feedback [role='alert'] {
+  color: var(--error-color);
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.progress {
+  display: grid;
+  gap: 8px;
+}
+
+.progress progress {
+  width: 100%;
+}
+
+.runId {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+@media (max-width: 600px) {
+  .controls {
+    grid-template-columns: 1fr;
+  }
+
+  .actions > * {
+    width: 100%;
+  }
+}

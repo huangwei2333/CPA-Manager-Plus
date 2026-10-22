@@ -12941,7 +12941,7 @@ describe('AccountsPage replacement flows', () => {
     expect(mocks.getActiveQuotaCooldowns).not.toHaveBeenCalled();
     expect(mocks.getHeaderSnapshots).toHaveBeenCalledTimes(1);
     expect(mocks.listAccountActionCandidates).not.toHaveBeenCalled();
-    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(4);
 
     await act(async () => {
       findDetailButtonByName(renderer, 'codex-a.json').props.onClick();
@@ -12951,7 +12951,7 @@ describe('AccountsPage replacement flows', () => {
     expect(mocks.getActiveQuotaCooldowns).toHaveBeenCalledTimes(1);
     expect(mocks.getHeaderSnapshots).toHaveBeenCalledTimes(1);
     expect(mocks.listAccountActionCandidates).toHaveBeenCalledTimes(1);
-    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(4);
     expect(treeText(renderer)).toContain('accounts.detail_overview_basis_cooldown');
 
     await act(async () => {
@@ -12962,7 +12962,7 @@ describe('AccountsPage replacement flows', () => {
     expect(mocks.getActiveQuotaCooldowns).toHaveBeenCalledTimes(1);
     expect(mocks.getHeaderSnapshots).toHaveBeenCalledTimes(1);
     expect(mocks.listAccountActionCandidates).toHaveBeenCalledTimes(1);
-    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(6);
     expect(mocks.quotaState.setCodexQuota).not.toHaveBeenCalled();
     expect(treeText(renderer)).toContain('accounts.detail_total_requests');
     expect(treeText(renderer)).toContain('accounts.detail_total_tokens');
@@ -12991,11 +12991,11 @@ describe('AccountsPage replacement flows', () => {
     expect(treeText(renderer)).toContain('accounts.detail_quota_standard_title');
     expect(renderer.root.findAllByProps({ 'data-account-quota-evidence': 'true' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ 'data-quota-evidence-panel': 'reset' })).toHaveLength(0);
-    const windowUsageRequest = mocks.getAccountWindowUsage.mock.calls[1]?.[2] as
-      | AccountWindowUsageRequestForTest
-      | undefined;
-    expect(windowUsageRequest?.windows).toHaveLength(2);
-    const windowUsageTargets = windowUsageRequest?.windows as Array<Record<string, unknown>>;
+    const detailWindowRequests = mocks.getAccountWindowUsage.mock.calls.slice(4, 6).map(
+      (call) => call[2] as AccountWindowUsageRequestForTest
+    );
+    expect(detailWindowRequests.every((request) => request.windows.length === 1)).toBe(true);
+    const windowUsageTargets = detailWindowRequests.flatMap((request) => request.windows);
     expect(windowUsageTargets[0]).toMatchObject({
       row_key: 'codex-a.json\u0000auth-a',
       source: 'codex-a.json',
@@ -13016,7 +13016,7 @@ describe('AccountsPage replacement flows', () => {
 
     expect(mocks.getAccountHistory).toHaveBeenCalledTimes(historyRequestCount + 1);
     expect(mocks.getHeaderSnapshots).toHaveBeenCalledTimes(2);
-    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(3);
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(8);
     expect(mocks.quotaState.setCodexQuota).not.toHaveBeenCalled();
 
     await act(async () => {
@@ -13028,7 +13028,7 @@ describe('AccountsPage replacement flows', () => {
     });
     await flushPromises();
 
-    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(3);
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(8);
     expect(mocks.quotaState.setCodexQuota).not.toHaveBeenCalled();
   });
 
@@ -13108,7 +13108,7 @@ describe('AccountsPage replacement flows', () => {
     expect(quotaFetch).not.toHaveBeenCalled();
     expect(mocks.getHeaderSnapshots).toHaveBeenCalledTimes(1);
     expect(mocks.listCodexInspectionRuns).toHaveBeenCalledTimes(1);
-    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(4);
 
     await act(async () => {
       await findButtonByText(renderer, 'common.refresh').props.onClick();
@@ -13121,7 +13121,7 @@ describe('AccountsPage replacement flows', () => {
     expect(mocks.listCodexInspectionRuns.mock.invocationCallOrder[1]).toBeLessThan(
       mocks.loadFiles.mock.invocationCallOrder[1]
     );
-    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(4);
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(8);
     expect(quotaFetch).not.toHaveBeenCalled();
   });
 
@@ -13194,7 +13194,7 @@ describe('AccountsPage replacement flows', () => {
 
     expect(renderer.root.findByType(AccountQuotaTab)).toBeTruthy();
     expect(accountQuotaSnapshotApi.query).toHaveBeenCalledTimes(1);
-    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
   });
 
   it('reloads lifecycle and window usage after detail quota refresh without loading history', async () => {
@@ -13233,7 +13233,7 @@ describe('AccountsPage replacement flows', () => {
     await flushPromises();
     await flushPromises();
     expect(accountQuotaSnapshotApi.query).toHaveBeenCalledTimes(1);
-    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(4);
     mocks.getAccountHistory.mockClear();
 
     await act(async () => {
@@ -13250,7 +13250,7 @@ describe('AccountsPage replacement flows', () => {
 
     expect(quotaFetch).toHaveBeenCalledTimes(1);
     expect(accountQuotaSnapshotApi.query).toHaveBeenCalledTimes(2);
-    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(4);
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(8);
     expect(mocks.getAccountHistory).not.toHaveBeenCalled();
   });
 
@@ -13312,7 +13312,7 @@ describe('AccountsPage replacement flows', () => {
     const renderer = await renderAccountsPage();
     await flushPromises();
 
-    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
     const card = findAccountCardByKey(renderer, getAuthFileSelectionKey(file));
     expect(readText(card)).toContain('$0.50');
     expect(readText(card)).toContain('50.0K');
@@ -13327,7 +13327,7 @@ describe('AccountsPage replacement flows', () => {
     const cardAfterRerender = findAccountCardByKey(renderer, getAuthFileSelectionKey(file));
     expect(readText(cardAfterRerender)).toContain('$0.50');
     expect(readText(cardAfterRerender)).toContain('50.0K');
-    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
   });
 
   it('rejects old detail quota usage after a same-row credential replacement', async () => {
@@ -13660,22 +13660,9 @@ describe('AccountsPage replacement flows', () => {
     let usageRequestCount = 0;
     mocks.getAccountWindowUsage.mockImplementation(async (_base, _managementKey, request) => {
       usageRequestCount += 1;
-      const totalRequests =
-        usageRequestCount === 1
-          ? 4
-          : usageRequestCount === 2
-            ? 5
-            : usageRequestCount === 3
-              ? 6
-              : 7;
-      const totalTokens =
-        usageRequestCount === 1
-          ? 9_939
-          : usageRequestCount === 2
-            ? 12_460
-            : usageRequestCount === 3
-              ? 14_981
-              : 17_502;
+      const refreshIndex = Math.floor((usageRequestCount - 1) / 2);
+      const totalRequests = [4, 5, 6, 7][refreshIndex];
+      const totalTokens = [9_939, 12_460, 14_981, 17_502][refreshIndex];
       const windows = request.windows as Array<{
         request_key: string;
         row_key: string;
@@ -13708,11 +13695,11 @@ describe('AccountsPage replacement flows', () => {
 
     expect(renderer.root.findByProps({ 'data-account-quota-usage-summary': 'true' })).toBeTruthy();
     expect(accountQuotaSnapshotApi.query).toHaveBeenCalledTimes(1);
-    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
     const initialDrawerWindowUsageRequest = mocks.getAccountWindowUsage.mock.calls[0]?.[2] as
       | AccountWindowUsageRequestForTest
       | undefined;
-    expect(initialDrawerWindowUsageRequest?.windows).toHaveLength(2);
+    expect(initialDrawerWindowUsageRequest?.windows).toHaveLength(1);
     const firstCurrentTarget = (
       initialDrawerWindowUsageRequest?.windows as Array<{
         period: string;
@@ -13737,10 +13724,10 @@ describe('AccountsPage replacement flows', () => {
     await flushPromises();
     await flushPromises();
 
-    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
-    const refreshedWindowUsageRequest = mocks.getAccountWindowUsage.mock.calls[
-      mocks.getAccountWindowUsage.mock.calls.length - 1
-    ]?.[2] as AccountWindowUsageRequestForTest | undefined;
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(4);
+    const refreshedWindowUsageRequest = mocks.getAccountWindowUsage.mock.calls[2]?.[2] as
+      | AccountWindowUsageRequestForTest
+      | undefined;
     const refreshedCurrentTarget = (
       refreshedWindowUsageRequest?.windows as Array<{
         period: string;
@@ -13776,8 +13763,8 @@ describe('AccountsPage replacement flows', () => {
     await flushPromises();
     await flushPromises();
 
-    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(3);
-    const reopenedWindowUsageRequest = mocks.getAccountWindowUsage.mock.calls[2]?.[2] as
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(6);
+    const reopenedWindowUsageRequest = mocks.getAccountWindowUsage.mock.calls[4]?.[2] as
       | AccountWindowUsageRequestForTest
       | undefined;
     const reopenedCurrentTarget = (
@@ -18205,21 +18192,91 @@ describe('AccountsPage replacement flows', () => {
       await renderAccountsPage();
       await flushPromises();
 
-      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
-      const listRequest = mocks.getAccountWindowUsage.mock.calls[0]?.[2] as {
-        windows: Array<{ provider_window_id: string; window_key: string; period: string }>;
-      };
-      expect(listRequest).toBeDefined();
+      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(6);
+      const listRequests = mocks.getAccountWindowUsage.mock.calls.map(
+        (call) => call[2] as {
+          windows: Array<{ provider_window_id: string; window_key: string; period: string }>;
+        }
+      );
+      expect(listRequests.every((request) => request.windows.length === 1)).toBe(true);
+      const listTargets = listRequests.flatMap((request) => request.windows);
+      expect(listTargets.slice(0, 3).every((target) => target.period === 'current')).toBe(true);
 
-      const monthlyEntries = listRequest.windows.filter(
+      const monthlyEntries = listTargets.filter(
         (w) => w.provider_window_id === 'monthly' || w.window_key === 'monthly'
       );
       expect(monthlyEntries).toHaveLength(2);
 
-      const queriedPairs = listRequest.windows.map((w) => `${w.provider_window_id}/${w.period}`);
+      const queriedPairs = listTargets.map((w) => `${w.provider_window_id}/${w.period}`);
       expect(queriedPairs).toContain('five-hour/current');
       expect(queriedPairs).toContain('weekly/current');
       expect(queriedPairs).toContain('monthly/current');
+    });
+
+    it('shows current-window usage before a previous-window request finishes', async () => {
+      const file = makeCodexFile('codex-fast-current.json', 'auth-current', 'current@example.com');
+      mocks.files = [file];
+      mocks.panelFeatureAvailability = {
+        checking: false,
+        managerServiceBase: 'http://manager.local:18317',
+        requestMonitoringAvailable: true,
+        serverCodexInspectionAvailable: false,
+      };
+      const resetAtMs = Date.now() + 3 * 3600 * 1000;
+      mocks.quotaState.codexQuota = buildCredentialScopedQuotaRecord(file, {
+        status: 'success',
+        windows: [{
+          id: 'five-hour',
+          label: 'Five hours',
+          usedPercent: 40,
+          resetAtMs,
+          resetLabel: new Date(resetAtMs).toISOString(),
+          resetAccuracy: 'exact',
+          limitWindowSeconds: 5 * 3600,
+          modelScope: CODEX_MAIN_SCOPE,
+        }],
+      });
+      const previousWindow = createDeferred<AccountWindowUsageResponseForTest>();
+      mocks.getAccountWindowUsage.mockImplementation((_base, _key, request) => {
+        const target = request.windows[0];
+        if (target.period === 'previous') return previousWindow.promise;
+        return Promise.resolve({
+          generated_at_ms: Date.now(),
+          items: [{
+            ...target,
+            matched: true,
+            total_requests: 10,
+            success_calls: 10,
+            failure_calls: 0,
+            total_tokens: 50_000,
+            total_cost: 0.5,
+            success_rate: 1,
+            last_seen_ms: Date.now() - 1000,
+            scope_match_status: 'complete',
+            unmatched_requests: 0,
+            sync_status: 'ready',
+          }],
+        });
+      });
+
+      const renderer = await renderAccountsPage();
+      await flushPromises();
+
+      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
+      expect(mocks.getAccountWindowUsage.mock.calls.map((call) => call[2].windows[0].period)).toEqual([
+        'current',
+        'previous',
+      ]);
+      const card = findAccountCardByKey(renderer, getAuthFileSelectionKey(file));
+      expect(readText(card)).toContain('$0.50');
+      expect(readText(card)).toContain('50.0K');
+
+      await act(async () => {
+        previousWindow.reject(new Error('historical timeout'));
+        await Promise.resolve();
+      });
+      expect(readText(findAccountCardByKey(renderer, getAuthFileSelectionKey(file)))).toContain('$0.50');
+      expect(mocks.showNotification).toHaveBeenCalledWith('notification.refresh_failed', 'warning');
     });
 
     it('synchronizes rendered quota windows and list usage targets across Table -> Grid -> Table transitions', async () => {
@@ -18341,13 +18398,14 @@ describe('AccountsPage replacement flows', () => {
       const selectionKey = getAuthFileSelectionKey(file);
 
       // 1. Initial Table mode: 4 rendered quota windows & 4 logical usage target windows
-      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
-      const initialTableRequest = mocks.getAccountWindowUsage.mock.calls[0]?.[2] as {
-        windows: Array<{ provider_window_id?: string; window_key?: string; period: string }>;
-      };
-      expect(initialTableRequest).toBeDefined();
+      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(8);
+      const initialTableTargets = mocks.getAccountWindowUsage.mock.calls.flatMap(
+        (call) => (call[2] as {
+          windows: Array<{ provider_window_id?: string; window_key?: string; period: string }>;
+        }).windows
+      );
       const initialTableSelectedWindowIds = new Set(
-        initialTableRequest.windows.map((w) => w.provider_window_id || w.window_key)
+        initialTableTargets.map((w) => w.provider_window_id || w.window_key)
       );
       expect(initialTableSelectedWindowIds.size).toBe(4);
       expect(Array.from(initialTableSelectedWindowIds)).toEqual(
@@ -18392,11 +18450,7 @@ describe('AccountsPage replacement flows', () => {
       });
       await flushPromises();
 
-      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
-      const gridRequest = mocks.getAccountWindowUsage.mock.calls[1]?.[2] as {
-        windows: Array<{ provider_window_id?: string; window_key?: string; period: string }>;
-      };
-      expect(gridRequest).toBeUndefined();
+      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(8);
 
       const gridCard = findAccountCardByKey(renderer, selectionKey);
       assertHistory();
@@ -18426,11 +18480,7 @@ describe('AccountsPage replacement flows', () => {
       });
       await flushPromises();
 
-      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
-      const restoredTableRequest = mocks.getAccountWindowUsage.mock.calls[2]?.[2] as {
-        windows: Array<{ provider_window_id?: string; window_key?: string; period: string }>;
-      };
-      expect(restoredTableRequest).toBeUndefined();
+      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(8);
 
       const restoredCard = findAccountCardByKey(renderer, selectionKey);
       assertHistory();
@@ -18483,8 +18533,8 @@ describe('AccountsPage replacement flows', () => {
       let callCount = 0;
       mocks.getAccountWindowUsage.mockImplementation(async (_base, _key, request) => {
         callCount++;
-        const cost = callCount === 1 ? 0.5 : 0.8;
-        const tokens = callCount === 1 ? 50_000 : 80_000;
+        const cost = callCount <= 2 ? 0.5 : 0.8;
+        const tokens = callCount <= 2 ? 50_000 : 80_000;
         return {
           generated_at_ms: Date.now(),
           items: request.windows.map((w) => ({
@@ -18513,7 +18563,7 @@ describe('AccountsPage replacement flows', () => {
       const renderer = await renderAccountsPage();
       await flushPromises();
 
-      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
+      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
       const card = findAccountCardByKey(renderer, getAuthFileSelectionKey(file));
       expect(readText(card)).toContain('$0.50');
       expect(readText(card)).toContain('50.0K');
@@ -18523,7 +18573,7 @@ describe('AccountsPage replacement flows', () => {
       });
       await flushPromises();
 
-      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
+      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(4);
       const updatedCard = findAccountCardByKey(renderer, getAuthFileSelectionKey(file));
       expect(readText(updatedCard)).toContain('$0.80');
       expect(readText(updatedCard)).toContain('80.0K');
@@ -18561,20 +18611,26 @@ describe('AccountsPage replacement flows', () => {
           windows: quotaWindows,
         }),
       };
-      let requests = 0;
+      let phase: 'initial' | 'refresh' | 'replacement' = 'initial';
       const deferredRefresh: { reject: (() => void) | null } = { reject: null };
       const identityRefresh: { reject: (() => void) | null } = { reject: null };
       mocks.getAccountWindowUsage.mockImplementation((_base, _key, request) => {
-        requests += 1;
-        if (requests === 2 || requests === 3) {
+        const window = request.windows[0];
+        if (
+          window?.period === 'current' &&
+          ((phase === 'refresh' && window.account_snapshot === file.account) ||
+            (phase === 'replacement' && window.account_snapshot === 'replacement@example.com'))
+        ) {
           return new Promise((_resolve, reject) => {
-            const target = requests === 2 ? deferredRefresh : identityRefresh;
+            const target = phase === 'refresh' ? deferredRefresh : identityRefresh;
             target.reject = () => reject(new Error('temporary network failure'));
           });
         }
         return Promise.resolve({
           generated_at_ms: Date.now(),
-          items: request.windows.map((w) => ({
+          items: phase === 'replacement' && window?.account_snapshot === 'replacement@example.com'
+            ? []
+            : request.windows.map((w) => ({
             request_key: w.request_key,
             row_key: w.row_key,
             window_key: w.window_key,
@@ -18602,10 +18658,11 @@ describe('AccountsPage replacement flows', () => {
       const rowKey = getAuthFileSelectionKey(file);
       expect(readText(findAccountCardByKey(renderer, rowKey))).toContain('$0.50');
 
+      phase = 'refresh';
       await act(async () => {
         await vi.advanceTimersByTimeAsync(60_000);
       });
-      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
+      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(8);
       expect(readText(findAccountCardByKey(renderer, rowKey))).toContain('$0.50');
       expect(readText(findAccountCardByKey(renderer, rowKey))).toContain('50.0K');
 
@@ -18633,14 +18690,17 @@ describe('AccountsPage replacement flows', () => {
           windows: quotaWindows,
         }),
       };
+      phase = 'replacement';
       await act(async () => {
         renderer.update(<AccountsPage />);
         await Promise.resolve();
       });
-      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(3);
-      expect(mocks.getAccountWindowUsage.mock.calls[2]?.[2].windows[0]?.account_snapshot).toBe(
-        'replacement@example.com'
-      );
+      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(12);
+      expect(
+        mocks.getAccountWindowUsage.mock.calls.slice(8).some(
+          (call) => call[2].windows[0]?.account_snapshot === 'replacement@example.com'
+        )
+      ).toBe(true);
       expect(readText(findAccountCardByKey(renderer, rowKey))).not.toContain('$0.50');
       expect(readText(findAccountCardByKey(renderer, rowKey))).not.toContain('50.0K');
       expect(readText(findAccountCardByKey(renderer, getAuthFileSelectionKey(stable)))).toContain('$0.50');
@@ -18690,8 +18750,8 @@ describe('AccountsPage replacement flows', () => {
       let callCount = 0;
       mocks.getAccountWindowUsage.mockImplementation(async (_base, _key, request) => {
         callCount++;
-        const cost = callCount === 1 ? 0.5 : 0.95;
-        const tokens = callCount === 1 ? 50_000 : 95_000;
+        const cost = callCount <= 2 ? 0.5 : 0.95;
+        const tokens = callCount <= 2 ? 50_000 : 95_000;
         return {
           generated_at_ms: Date.now(),
           items: request.windows.map((w) => ({
@@ -18720,7 +18780,7 @@ describe('AccountsPage replacement flows', () => {
       const renderer = await renderAccountsPage();
       await flushPromises();
 
-      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
+      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
       const card = findAccountCardByKey(renderer, getAuthFileSelectionKey(file));
       expect(readText(card)).toContain('$0.50');
 
@@ -18734,7 +18794,7 @@ describe('AccountsPage replacement flows', () => {
       });
       await flushPromises();
 
-      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
+      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(4);
       const updatedCard = findAccountCardByKey(renderer, getAuthFileSelectionKey(file));
       expect(readText(updatedCard)).toContain('$0.95');
     });
@@ -18831,7 +18891,7 @@ describe('AccountsPage replacement flows', () => {
       const renderer = await renderAccountsPage();
       await flushPromises();
 
-      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
+      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(4);
 
       const batchRefreshButton = findButtonByText(renderer, 'accounts.refresh_quota');
       await act(async () => {
@@ -18839,10 +18899,10 @@ describe('AccountsPage replacement flows', () => {
       });
       await flushPromises();
 
-      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
+      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(8);
     });
 
-    it('retains last verified exact usage when a live list usage request fails silently', async () => {
+    it('retains last verified exact usage and warns once when list window requests fail', async () => {
       vi.useFakeTimers();
       const file = makeCodexFile('codex-fail-clear.json', 'auth-fail-clear', 'fail-clear@example.com');
       mocks.files = [file];
@@ -18874,7 +18934,7 @@ describe('AccountsPage replacement flows', () => {
       let callCount = 0;
       mocks.getAccountWindowUsage.mockImplementation(async (_base, _key, request) => {
         callCount++;
-        if (callCount === 1) {
+        if (callCount <= 2) {
           return {
             generated_at_ms: Date.now(),
             items: request.windows.map((w) => ({
@@ -18905,7 +18965,7 @@ describe('AccountsPage replacement flows', () => {
       const renderer = await renderAccountsPage();
       await flushPromises();
 
-      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
+      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
       const card = findAccountCardByKey(renderer, getAuthFileSelectionKey(file));
       expect(readText(card)).toContain('$0.50');
 
@@ -18916,11 +18976,12 @@ describe('AccountsPage replacement flows', () => {
       });
       await flushPromises();
 
-      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
+      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(4);
       const cardAfterFailure = findAccountCardByKey(renderer, getAuthFileSelectionKey(file));
       expect(readText(cardAfterFailure)).toContain('$0.50');
       expect(readText(cardAfterFailure)).toContain('50.0K');
-      expect(mocks.showNotification).not.toHaveBeenCalled();
+      expect(mocks.showNotification).toHaveBeenCalledTimes(1);
+      expect(mocks.showNotification).toHaveBeenCalledWith('notification.refresh_failed', 'warning');
     });
 
     it('provides keyboard accessibility for Grid card shortcuts and includes footer detail button', async () => {

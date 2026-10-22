@@ -274,13 +274,25 @@ export const buildAccountWindowUsageByKey = (
 
 export const filterAccountWindowUsageByTargetRanges = (
   entries: AccountWindowUsageTargetEntry[],
-  usageByKey: Map<string, MonitoringAccountWindowUsageItem>
+  usageByKey: Map<string, MonitoringAccountWindowUsageItem>,
+  options: { allowPriorCurrentEnd?: boolean } = {}
 ): Map<string, MonitoringAccountWindowUsageItem> => {
   const result = new Map<string, MonitoringAccountWindowUsageItem>();
   entries.forEach((entry) => {
     const usage = usageByKey.get(entry.requestKey);
     if (!usage) return;
-    if (usage.from_ms !== entry.target.from_ms || usage.to_ms !== entry.target.to_ms) return;
+    if (usage.from_ms !== entry.target.from_ms) return;
+    // 同周期刷新时，其他窗口先返回也不能遮掉仍可信的本周期旧快照。
+    if (
+      usage.to_ms !== entry.target.to_ms &&
+      !(
+        options.allowPriorCurrentEnd &&
+        entry.period === 'current' &&
+        usage.to_ms > usage.from_ms &&
+        usage.to_ms < entry.target.to_ms
+      )
+    )
+      return;
     result.set(entry.requestKey, usage);
   });
   return result;

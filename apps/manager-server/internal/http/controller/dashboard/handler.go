@@ -20,6 +20,17 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 	if !middleware.AuthorizePanel(w, r, h.App.AdminAuthService) {
 		return
 	}
+	if h.App.UsageService != nil {
+		ready, err := h.App.UsageService.RequestCleanupReadReady(r.Context())
+		if err != nil {
+			response.JSON(w, http.StatusInternalServerError, map[string]string{"error": "statistics are unavailable", "code": "request_cleanup_status_failed"})
+			return
+		}
+		if !ready {
+			response.JSON(w, http.StatusServiceUnavailable, map[string]string{"error": "statistics are rebuilding after request cleanup", "code": "request_cleanup_rebuilding"})
+			return
+		}
+	}
 
 	path := strings.TrimRight(r.URL.Path, "/")
 	if path != "/v0/management/dashboard/summary" {

@@ -615,6 +615,29 @@ export interface UsageArchivePreview {
   max_timestamp_ms?: number;
 }
 
+export interface UsageRequestCleanupPreview {
+  cutoff_timestamp_ms: number;
+  target_event_id: number;
+  event_count: number;
+  preview_token: string;
+  expires_at_ms: number;
+}
+
+export interface UsageRequestCleanupStatus {
+  run_id: string;
+  status: 'queued' | 'deleting' | 'rebuilding' | 'completed' | 'failed';
+  cutoff_timestamp_ms: number;
+  target_event_id: number;
+  target_count: number;
+  deleted_count: number;
+  rebuild_status: 'pending' | 'rebuilding' | 'ready' | 'failed';
+  error_code?: string;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export type UsageRequestCleanupStart = UsageRequestCleanupStatus;
+
 // Public archive DTO. Deliberately excludes archive paths, formats, digests,
 // schema metadata, and raw internal errors.
 export interface UsageArchiveProgress {
@@ -3798,6 +3821,97 @@ export const usageServiceApi = {
           timeout: USAGE_SERVICE_TIMEOUT_MS,
           headers: authHeaders(managementKey),
         }
+      );
+      return response.data;
+    });
+  },
+
+  previewRequestCleanup: async (
+    base: string,
+    cutoffTimestampMs: number,
+    managementKey?: string,
+    signal?: AbortSignal
+  ): Promise<UsageRequestCleanupPreview> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      throw new Error('Request data cleanup is unavailable in demo mode.');
+    }
+    return withUsageServiceError(async () => {
+      const response = await axios.post<UsageRequestCleanupPreview>(
+        buildUrl(base, '/v0/management/usage/request-cleanup/preview'),
+        { cutoff_timestamp_ms: cutoffTimestampMs },
+        { timeout: USAGE_SERVICE_TIMEOUT_MS, headers: authHeaders(managementKey), signal }
+      );
+      return response.data;
+    });
+  },
+
+  executeRequestCleanup: async (
+    base: string,
+    preview: UsageRequestCleanupPreview,
+    managementKey?: string,
+    signal?: AbortSignal
+  ): Promise<UsageRequestCleanupStart> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      throw new Error('Request data cleanup is unavailable in demo mode.');
+    }
+    return withUsageServiceError(async () => {
+      const response = await axios.post<UsageRequestCleanupStart>(
+        buildUrl(base, '/v0/management/usage/request-cleanup/execute'),
+        {
+          cutoff_timestamp_ms: preview.cutoff_timestamp_ms,
+          target_event_id: preview.target_event_id,
+          event_count: preview.event_count,
+          preview_token: preview.preview_token,
+          confirmation: 'DELETE_REQUEST_DATA',
+        },
+        { timeout: USAGE_SERVICE_TIMEOUT_MS, headers: authHeaders(managementKey), signal }
+      );
+      return response.data;
+    });
+  },
+
+  getRequestCleanupStatus: async (
+    base: string,
+    runId: string | null,
+    managementKey?: string,
+    signal?: AbortSignal
+  ): Promise<UsageRequestCleanupStatus | null> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      throw new Error('Request data cleanup is unavailable in demo mode.');
+    }
+    return withUsageServiceError(async () => {
+      try {
+        const response = await axios.get<UsageRequestCleanupStatus>(
+          buildUrl(base, '/v0/management/usage/request-cleanup/status'),
+          {
+            timeout: USAGE_SERVICE_TIMEOUT_MS,
+            headers: authHeaders(managementKey),
+            params: runId ? { run_id: runId } : undefined,
+            signal,
+          }
+        );
+        return response.data;
+      } catch (error) {
+        if (!runId && axios.isAxiosError(error) && error.response?.status === 404) return null;
+        throw error;
+      }
+    });
+  },
+
+  resumeRequestCleanup: async (
+    base: string,
+    runId: string,
+    managementKey?: string,
+    signal?: AbortSignal
+  ): Promise<UsageRequestCleanupStart> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      throw new Error('Request data cleanup is unavailable in demo mode.');
+    }
+    return withUsageServiceError(async () => {
+      const response = await axios.post<UsageRequestCleanupStart>(
+        buildUrl(base, '/v0/management/usage/request-cleanup/resume'),
+        { run_id: runId },
+        { timeout: USAGE_SERVICE_TIMEOUT_MS, headers: authHeaders(managementKey), signal }
       );
       return response.data;
     });

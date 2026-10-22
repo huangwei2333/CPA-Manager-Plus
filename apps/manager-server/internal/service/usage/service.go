@@ -42,6 +42,7 @@ type Service struct {
 	importSessions         *importSessionManager
 	archive                *archiveManager
 	archiveJobs            *archiveJobRunner
+	requestCleanup         *requestCleanupManager
 }
 
 const importBatchSize = 256
@@ -56,8 +57,12 @@ func WithImportSessions(config ImportSessionConfig) Option {
 
 func New(store *store.Store, options ...Option) *Service {
 	service := &Service{store: store}
+	service.requestCleanup = newRequestCleanupManager(store)
 	for _, option := range options {
 		option(service)
+	}
+	if service.archive != nil {
+		service.requestCleanup.aggregateEnabled = service.archive.config.AggregateReadsEnabled
 	}
 	return service
 }

@@ -181,6 +181,51 @@ describe('accountWindowUsageRows', () => {
     expect(filterAccountWindowUsageByTargetRanges(currentEntries, usageByKey)).toHaveLength(0);
   });
 
+  it('retains a prior current-window snapshot during refresh without crossing a cycle boundary', () => {
+    const row = makeRow({});
+    const oldEntries = buildAccountWindowUsageTargetEntries(
+      [row],
+      new Map([[row.selectionKey, [{ key: '5h', fromMs: 1_000, toMs: 2_000 }]]])
+    );
+    const usageByKey = buildAccountWindowUsageByKey(oldEntries, [
+      {
+        row_key: row.selectionKey,
+        window_key: '5h',
+        from_ms: 1_000,
+        to_ms: 2_000,
+        matched: true,
+        total_requests: 7,
+        success_calls: 7,
+        failure_calls: 0,
+        total_tokens: 70_000,
+        total_cost: 0.7,
+        success_rate: 1,
+        last_seen_ms: 1_900,
+        sync_status: 'ready',
+      },
+    ]);
+    const refreshedEntries = buildAccountWindowUsageTargetEntries(
+      [row],
+      new Map([[row.selectionKey, [{ key: '5h', fromMs: 1_000, toMs: 2_500 }]]])
+    );
+    const nextCycleEntries = buildAccountWindowUsageTargetEntries(
+      [row],
+      new Map([[row.selectionKey, [{ key: '5h', fromMs: 2_000, toMs: 3_000 }]]])
+    );
+
+    expect(filterAccountWindowUsageByTargetRanges(refreshedEntries, usageByKey)).toHaveLength(0);
+    expect(
+      filterAccountWindowUsageByTargetRanges(refreshedEntries, usageByKey, {
+        allowPriorCurrentEnd: true,
+      })
+    ).toHaveLength(1);
+    expect(
+      filterAccountWindowUsageByTargetRanges(nextCycleEntries, usageByKey, {
+        allowPriorCurrentEnd: true,
+      })
+    ).toHaveLength(0);
+  });
+
   it('creates distinct current and previous targets across a lifecycle gap', () => {
     const row = makeRow({});
     const definition: AccountQuotaWindowDefinition = {

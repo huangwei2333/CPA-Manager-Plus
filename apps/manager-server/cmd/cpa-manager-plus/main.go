@@ -272,6 +272,9 @@ func runServer() {
 	if err := serverApp.AppContext().UsageService.StartArchiveJobs(ctx); err != nil {
 		log.Printf("[startup] start usage archive jobs: %v", err)
 	}
+	if err := serverApp.AppContext().UsageService.StartRequestCleanupJobs(ctx); err != nil {
+		log.Printf("[startup] start request cleanup jobs: %v", err)
+	}
 
 	if err := db.RunDerivedStartupMaintenance(ctx); err != nil && ctx.Err() == nil {
 		log.Printf("[startup] post-listen index preparation failed; continuing without blocking background workers: %v", err)
@@ -346,6 +349,9 @@ func runServer() {
 	}
 	if err := serverApp.AppContext().UsageService.WaitArchiveJobs(shutdownCtx); err != nil {
 		log.Printf("shutdown usage archive jobs: %v", err)
+	}
+	if err := serverApp.AppContext().UsageService.WaitRequestCleanupJobs(shutdownCtx); err != nil {
+		log.Printf("shutdown request cleanup jobs: %v", err)
 	}
 }
 

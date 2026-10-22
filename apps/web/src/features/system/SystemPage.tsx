@@ -21,6 +21,8 @@ import {
 } from '@/stores';
 import { apiKeysApi } from '@/services/api/apiKeys';
 import { usageServiceApi, type UsageServiceStatus } from '@/services/api/usageService';
+import { isDemoMode } from '@/features/demo/demoMode';
+import { sha256Hex } from '@/utils/apiKeyHash';
 import { classifyModels, modelDisplayLabel } from '@/utils/models';
 import { STORAGE_KEY_AUTH, STORAGE_KEY_QUOTA_CACHE } from '@/utils/constants';
 import iconGemini from '@/assets/icons/gemini.svg';
@@ -39,6 +41,7 @@ import iconDeepseek from '@/assets/icons/deepseek.svg';
 import iconMinimax from '@/assets/icons/minimax.svg';
 import iconMeta from '@/assets/icons/meta.svg';
 import { DatabaseStatusCard } from './components/DatabaseStatusCard';
+import { RequestCleanupCard, type RequestCleanupPreview } from './components/RequestCleanupCard';
 import { useManagerUpdates } from './ManagerUpdates';
 import styles from './SystemPage.module.scss';
 
@@ -243,6 +246,87 @@ function SystemPageContent() {
     featureAvailability.managerServiceBase,
   ]);
 
+  const canUseRequestCleanup =
+    !featureAvailability.checking &&
+    featureAvailability.panelHostMode === 'manager_embedded' &&
+    featureAvailability.managerServiceAvailable &&
+    Boolean(featureAvailability.managerServiceBase && auth.managementKey) &&
+    !(__DEMO_SITE__ && isDemoMode());
+  const cleanupScopeKey = useMemo(
+    () => sha256Hex(`${featureAvailability.managerServiceBase}\u0000${auth.managementKey ?? ''}`),
+    [featureAvailability.managerServiceBase, auth.managementKey]
+  );
+  const previewRequestCleanup = useCallback(
+    async (cutoffTimestampMs: number, signal: AbortSignal): Promise<RequestCleanupPreview> => {
+      const result = await usageServiceApi.previewRequestCleanup(
+        featureAvailability.managerServiceBase,
+        cutoffTimestampMs,
+        auth.managementKey,
+        signal
+      );
+      return {
+        cutoffTimestampMs: result.cutoff_timestamp_ms,
+        targetEventId: result.target_event_id,
+        eventCount: result.event_count,
+        previewToken: result.preview_token,
+        expiresAtMs: result.expires_at_ms,
+      };
+    },
+    [featureAvailability.managerServiceBase, auth.managementKey]
+  );
+  const executeRequestCleanup = useCallback(
+    async (preview: RequestCleanupPreview, signal: AbortSignal) => {
+      const result = await usageServiceApi.executeRequestCleanup(
+        featureAvailability.managerServiceBase,
+        {
+          cutoff_timestamp_ms: preview.cutoffTimestampMs,
+          target_event_id: preview.targetEventId,
+          event_count: preview.eventCount,
+          preview_token: preview.previewToken,
+          expires_at_ms: preview.expiresAtMs,
+        },
+        auth.managementKey,
+        signal
+      );
+      return result.run_id;
+    },
+    [featureAvailability.managerServiceBase, auth.managementKey]
+  );
+  const getRequestCleanupStatus = useCallback(
+    async (runId: string | null, signal: AbortSignal) => {
+      const result = await usageServiceApi.getRequestCleanupStatus(
+        featureAvailability.managerServiceBase,
+        runId,
+        auth.managementKey,
+        signal
+      );
+      if (!result) return null;
+      return {
+        runId: result.run_id,
+        status: result.status,
+        targetCount: result.target_count,
+        deletedCount: result.deleted_count,
+        rebuildStatus: result.rebuild_status,
+        errorCode: result.error_code,
+      };
+    },
+    [featureAvailability.managerServiceBase, auth.managementKey]
+  );
+  const resumeRequestCleanup = useCallback(
+    async (runId: string, signal: AbortSignal) => {
+      await usageServiceApi.resumeRequestCleanup(
+        featureAvailability.managerServiceBase,
+        runId,
+        auth.managementKey,
+        signal
+      );
+    },
+    [featureAvailability.managerServiceBase, auth.managementKey]
+  );
+  const handleRequestCleanupCompleted = useCallback(() => {
+    void refreshDatabaseStatus();
+  }, [refreshDatabaseStatus]);
+
   const handleClearLoginStorage = () => {
     showConfirmation({
       title: t('system_info.clear_login_title', { defaultValue: 'Clear Login Storage' }),
@@ -369,6 +453,19 @@ function SystemPageContent() {
             status={databaseStatus}
             loading={databaseLoading}
             error={databaseError}
+          />
+        )}
+
+        {canUseRequestCleanup && (
+          <RequestCleanupCard
+            key={cleanupScopeKey}
+            isAvailable={canUseRequestCleanup}
+            storageKey={cleanupScopeKey}
+            onPreview={previewRequestCleanup}
+            onExecute={executeRequestCleanup}
+            onStatus={getRequestCleanupStatus}
+            onResume={resumeRequestCleanup}
+            onCompleted={handleRequestCleanupCompleted}
           />
         )}
 

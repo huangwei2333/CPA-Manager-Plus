@@ -679,6 +679,23 @@ func Migrate(db *sql.DB) error {
 			updated_at_ms integer not null,
 			foreign key (run_id) references usage_archive_runs(id) on delete cascade
 		)`,
+		`create table if not exists usage_request_cleanup_runs (
+			id text primary key,
+			cutoff_timestamp_ms integer not null,
+			target_event_id integer not null,
+			target_count integer not null,
+			rebuild_target_event_id integer not null default 0,
+			reset_done integer not null default 0,
+			last_deleted_event_id integer not null default 0,
+			deleted_count integer not null default 0,
+			status text not null,
+			error_code text not null default '',
+			created_at_ms integer not null,
+			updated_at_ms integer not null
+		)`,
+		`create unique index if not exists idx_usage_request_cleanup_active
+			on usage_request_cleanup_runs ((1))
+			where status in ('queued', 'deleting', 'rebuilding')`,
 		`create table if not exists usage_data_migrations (
 			name text primary key,
 			status text not null,

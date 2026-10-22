@@ -23,6 +23,7 @@ const maxUsageArchiveRequestBytes int64 = 64 * 1024
 const usageImportSessionsPath = "/v0/management/usage/import-sessions"
 const usageArchivesPath = "/v0/management/usage/archives"
 const usageMaintenancePath = "/v0/management/usage/maintenance"
+const usageRequestCleanupPath = "/v0/management/usage/request-cleanup"
 
 type Handler struct {
 	App *app.Context
@@ -30,6 +31,20 @@ type Handler struct {
 
 func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 	cleanPath := strings.TrimRight(r.URL.Path, "/")
+	if cleanPath == usageRequestCleanupPath+"/preview" ||
+		cleanPath == usageRequestCleanupPath+"/execute" ||
+		cleanPath == usageRequestCleanupPath+"/status" ||
+		cleanPath == usageRequestCleanupPath+"/resume" {
+		if !middleware.AuthorizeAdmin(w, r, h.App.AdminAuthService) {
+			return
+		}
+		h.handleRequestCleanup(w, r, cleanPath)
+		return
+	}
+	if strings.HasPrefix(cleanPath, usageRequestCleanupPath) {
+		http.NotFound(w, r)
+		return
+	}
 	if strings.HasPrefix(cleanPath, usageMaintenancePath) {
 		if !middleware.AuthorizeAdmin(w, r, h.App.AdminAuthService) {
 			return
@@ -77,13 +92,22 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
+		ready, err := h.App.UsageService.RequestCleanupReadReady(r.Context())
+		if err != nil {
+			response.JSON(w, http.StatusInternalServerError, map[string]string{"error": "statistics are unavailable", "code": "request_cleanup_status_failed"})
+			return
+		}
+		if !ready {
+			response.JSON(w, http.StatusServiceUnavailable, map[string]string{"error": "statistics are rebuilding after request cleanup", "code": "request_cleanup_rebuilding"})
+			return
+		}
 		if strings.HasSuffix(r.URL.Path, "/export") {
 			h.Export(w, r)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		writer := &countingWriter{writer: w}
-		err := h.App.UsageService.WriteCompatibleUsage(r.Context(), writer, h.App.Config.QueryLimit)
+		err = h.App.UsageService.WriteCompatibleUsage(r.Context(), writer, h.App.Config.QueryLimit)
 		if err != nil {
 			if writer.written == 0 {
 				response.Error(w, http.StatusInternalServerError, err)
